@@ -65,6 +65,25 @@ final class StubTransport: HTTPTransport, @unchecked Sendable {
         return self
     }
 
+    /// Reply with each of `replies` in turn for matching requests, repeating the
+    /// last once exhausted (e.g. 500 then 200, or on_hold then success).
+    @discardableResult
+    func onSequence(_ pathFragment: String, method: String? = nil, replies: [StubReply]) -> StubTransport {
+        var index = 0
+        matchers.append(Matcher(
+            matches: { request in
+                if let method = method, request.method != method { return false }
+                return request.url.absoluteString.contains(pathFragment)
+            },
+            reply: { _ in
+                let reply = replies[min(index, replies.count - 1)]
+                index += 1
+                return reply
+            }
+        ))
+        return self
+    }
+
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         requests.append(request)
         for matcher in matchers where matcher.matches(request) {
