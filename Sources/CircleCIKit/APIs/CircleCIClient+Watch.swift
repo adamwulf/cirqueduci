@@ -28,22 +28,27 @@ extension CircleCIClient {
                            timeout: TimeInterval = 1800,
                            onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobDetail {
         let deadline = Date().addingTimeInterval(timeout)
-        var job: JobDetail
-        repeat {
-            job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
-            onPoll?(job)
-
-            if job.status.isFinished {
-                return job
+        var lastInWindow = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+        onPoll?(lastInWindow)
+        while true {
+            if lastInWindow.status.isFinished {
+                return lastInWindow
             }
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 {
-                break
+                return lastInWindow // out of budget, still running -> timeout
             }
             try await Self.nap(min(pollInterval, remaining))
-            // Re-check the deadline after sleeping: a completion observed only
-            // on a post-deadline fetch must not mask the timeout.
-        } while Date() < deadline
-        return job
+
+            let observed = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+            onPoll?(observed)
+            if Date() >= deadline {
+                // This poll returned after the deadline — a slow request or retry
+                // backoff can overrun it. Honor the timeout: a completion seen
+                // only now must not count, so report the last in-window state.
+                return observed.status.isFinished ? lastInWindow : observed
+            }
+            lastInWindow = observed
+        }
     }
 }

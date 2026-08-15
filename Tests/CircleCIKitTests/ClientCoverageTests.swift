@@ -250,6 +250,25 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertLessThan(elapsed, 3, "must return near the 0.2s timeout, not sleep the 10s interval")
     }
 
+    func testWaitForJobReportsTimeoutWhenCompletionIsObservedAfterDeadline() async throws {
+        // First poll: fast, still running. Second poll: returns success, but only
+        // after a delay (slow request / retry backoff) that lands past the
+        // deadline. That late completion must not mask the timeout.
+        let running = "{ \"number\": 1, \"name\": \"j\", \"status\": \"running\" }"
+        let success = "{ \"number\": 1, \"name\": \"j\", \"status\": \"success\" }"
+        var call = 0
+        let stub = StubTransport().on(where: { $0.url.absoluteString.contains("/job/") }) { _ in
+            call += 1
+            return call == 1 ? StubReply(json: running) : StubReply(json: success, delay: 0.3)
+        }
+        let client = makeClient(stub)
+
+        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                              pollInterval: 0, timeout: 0.1)
+        XCTAssertFalse(job.status.isFinished,
+                       "a success seen only after the deadline must be reported as a timeout")
+    }
+
     // MARK: - Artifact download + traversal guard
 
     func testDownloadArtifactsWritesFiles() async throws {
