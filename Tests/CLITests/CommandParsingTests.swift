@@ -113,25 +113,29 @@ final class CommandParsingTests: XCTestCase {
     // MARK: - watch defaults
 
     func testWatchDefaults() throws {
-        let command = try WatchCommand.parse(["pipeline-id"])
-        XCTAssertEqual(command.target, "pipeline-id")
-        XCTAssertNil(command.project)
+        let command = try WatchCommand.parse(["89693", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.jobNumber, 89693)
+        XCTAssertEqual(command.project, "gh/museapphq/Muse")
         XCTAssertEqual(command.interval, 60)
         XCTAssertEqual(command.timeout, 1800)
     }
 
-    func testWatchAcceptsJobNumberWithProject() throws {
-        let command = try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse"])
-        XCTAssertEqual(command.target, "89693")
-        XCTAssertEqual(command.project, "gh/museapphq/Muse")
+    func testWatchRequiresJobNumberAndProject() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693"]), "project is required")
+        XCTAssertThrowsError(try WatchCommand.parse([]), "job number is required")
+    }
+
+    func testWatchRejectsNonIntegerJobNumber() {
+        // A pipeline UUID (or any non-integer) is no longer accepted — watch is job-only.
+        XCTAssertThrowsError(try WatchCommand.parse(["5b106d01-e67c-46c5-97b5-6d2a2b73479c", "gh/museapphq/Muse"]))
     }
 
     func testWatchRejectsNonPositiveInterval() {
-        XCTAssertThrowsError(try WatchCommand.parse(["x", "--interval", "0"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "0"]))
     }
 
     func testWatchRejectsNegativeTimeout() {
-        XCTAssertThrowsError(try WatchCommand.parse(["x", "--timeout=-5"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--timeout=-5"]))
     }
 
     // MARK: - recent defaults

@@ -10,14 +10,14 @@ import CircleCIKit
 struct WatchCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "watch",
-        abstract: "Watch a pipeline (by id) or one build job (by number) until it finishes, printing status each poll."
+        abstract: "Watch a single build job until it finishes, printing status each poll."
     )
 
-    @Argument(help: "A pipeline id (UUID) to watch its workflows, or a build job number to watch a single job.")
-    var target: String
+    @Argument(help: "The build job number (from a workflow's job listing).")
+    var jobNumber: Int
 
-    @Option(name: [.short, .long], help: "Project slug, e.g. gh/museapphq/Muse. Required when the target is a job number.")
-    var project: String?
+    @Argument(help: "Project slug, e.g. gh/museapphq/Muse.")
+    var project: String
 
     @Option(name: [.short, .long], help: "Seconds between polls.")
     var interval: Double = 60
@@ -25,7 +25,7 @@ struct WatchCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Give up after this many seconds.")
     var timeout: Double = 1800
 
-    @Option(name: [.short, .long], help: "Output format for each poll's snapshot.")
+    @Option(name: [.short, .long], help: "Output format for the final snapshot.")
     var format: OutputFormat = .table
 
     func validate() throws {
@@ -38,47 +38,6 @@ struct WatchCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
-        // A pipeline id is a UUID; a job number is an integer. Route on shape.
-        if let jobNumber = Int(target) {
-            try await watchJob(jobNumber)
-        } else {
-            try await watchPipeline()
-        }
-    }
-
-    // MARK: - Pipeline (all workflows)
-
-    private func watchPipeline() async throws {
-        var pollCount = 0
-        let workflows = try await CircleCIClient.shared.waitForPipeline(
-            id: target,
-            pollInterval: interval,
-            timeout: timeout
-        ) { workflows in
-            pollCount += 1
-            FileHandle.standardError.write(Data("— poll \(pollCount) —\n".utf8))
-            if let text = try? OutputFormatter.render(workflows, format: format), !text.isEmpty {
-                FileHandle.standardError.write(Data((text + "\n").utf8))
-            }
-        }
-
-        // Final snapshot to stdout.
-        try Cirqueduci.emit(workflows, format: format)
-        if !CircleCIClient.allFinished(workflows) {
-            throw ExitCode(2) // timed out before completion
-        }
-        if CircleCIClient.anyFailed(workflows) {
-            throw ExitCode(1) // finished, but at least one workflow genuinely failed
-        }
-    }
-
-    // MARK: - Single job
-
-    private func watchJob(_ jobNumber: Int) async throws {
-        guard let project = project else {
-            throw ValidationError("Watching a job number requires --project <slug> (job numbers are per-project).")
-        }
-
         let job = try await CircleCIClient.shared.waitForJob(
             projectSlug: project,
             jobNumber: jobNumber,
