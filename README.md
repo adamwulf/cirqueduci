@@ -1,8 +1,8 @@
 # cirqueduci
 
 A command-line tool for the [CircleCI](https://circleci.com) v2 REST API. View
-current and recent pipelines, trigger them, approve manual-approval gates, watch
-them to completion, and pull step logs and artifacts.
+current and recent pipelines, trigger them, approve manual-approval gates, wait
+on a build to completion, and pull step logs and artifacts.
 
 `cirqueduci` is built as a Swift package: all logic lives in the `CircleCIKit`
 library (fully unit-tested against mocked API replies — no live network in
@@ -57,6 +57,10 @@ cirqueduci pipelines --project gh/museapphq/Muse --branch main --limit 10
 cirqueduci pipelines --org gh/museapphq --mine
 cirqueduci pipelines <pipeline-id>
 
+# See everything with activity in a recent window, with each pipeline's workflow rollup
+cirqueduci recent --project gh/museapphq/Muse                       # last 24h (default)
+cirqueduci recent --project gh/museapphq/Muse --hours 6 --running   # only what's still in progress
+
 # Drill down: pipeline -> workflows -> jobs
 cirqueduci workflows <pipeline-id>
 cirqueduci jobs <workflow-id>
@@ -86,18 +90,20 @@ cirqueduci approve <workflow-id> --approval-request-id <id>
 cirqueduci cancel <workflow-id>
 cirqueduci rerun <workflow-id>
 
-# Watch a pipeline until every workflow finishes (polls; exit code reflects result)
-cirqueduci watch <pipeline-id> --interval 10
+# Watch a single build job until it finishes (polls; prints a status line each interval)
+cirqueduci watch 40796 --project gh/museapphq/Muse
+# Exit codes: 0 = success (not_run/retried also pass), 1 = failed, 2 = timed out. Default interval 60s.
 ```
 
 ### End-to-end (agent) flow
 
 ```bash
-# start a build, capture its pipeline id, watch it, approve the release gate, pull logs
+# start a build, approve the release gate, then wait on the mac-release build and pull its logs
 PIPELINE=$(cirqueduci trigger --project gh/museapphq/Muse --branch main --format id)
-cirqueduci watch "$PIPELINE"
 WORKFLOW=$(cirqueduci workflows "$PIPELINE" --format id | head -1)
 cirqueduci approve "$WORKFLOW" --job approve-mac-release
+cirqueduci jobs "$WORKFLOW"                              # read the mac-release JOB_NUMBER
+cirqueduci watch 40796 --project gh/museapphq/Muse      # wait until that one build finishes
 cirqueduci logs 40796 --project gh/museapphq/Muse
 ```
 

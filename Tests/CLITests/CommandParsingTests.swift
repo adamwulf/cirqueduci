@@ -113,17 +113,74 @@ final class CommandParsingTests: XCTestCase {
     // MARK: - watch defaults
 
     func testWatchDefaults() throws {
-        let command = try WatchCommand.parse(["pipeline-id"])
-        XCTAssertEqual(command.pipelineId, "pipeline-id")
-        XCTAssertEqual(command.interval, 5)
+        let command = try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.locator.jobNumber, 89693)
+        XCTAssertEqual(command.locator.project, "gh/museapphq/Muse")
+        XCTAssertEqual(command.interval, 60)
         XCTAssertEqual(command.timeout, 1800)
+    }
+
+    func testWatchRequiresJobNumberAndProject() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693"]), "project is required")
+        XCTAssertThrowsError(try WatchCommand.parse([]), "job number is required")
+    }
+
+    func testWatchRejectsNonIntegerJobNumber() {
+        // A pipeline UUID (or any non-integer) is no longer accepted — watch is job-only.
+        XCTAssertThrowsError(try WatchCommand.parse(["5b106d01-e67c-46c5-97b5-6d2a2b73479c", "--project", "gh/museapphq/Muse"]))
+    }
+
+    func testWatchRejectsNonPositiveInterval() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "0"]))
+    }
+
+    func testWatchRejectsNegativeTimeout() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout=-5"]))
+    }
+
+    func testWatchRejectsNonFiniteIntervalAndTimeout() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "nan"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "inf"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout", "nan"]))
+    }
+
+    func testWatchRejectsAbsurdlyLargeIntervalAndTimeout() {
+        // Beyond the sane upper bound (would overflow the nanosecond sleep math).
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "20000000000"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout", "20000000000"]))
+    }
+
+    // MARK: - recent defaults
+
+    func testRecentDefaults() throws {
+        let command = try RecentCommand.parse(["--project", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.project, "gh/museapphq/Muse")
+        XCTAssertEqual(command.hours, 24)
+        XCTAssertFalse(command.running)
+        XCTAssertEqual(command.limit, 50)
+    }
+
+    func testRecentRequiresProject() {
+        XCTAssertThrowsError(try RecentCommand.parse([]))
+    }
+
+    func testRecentRejectsNonPositiveHours() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--hours", "0"]))
+    }
+
+    func testRecentRejectsZeroLimit() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--limit", "0"]))
+    }
+
+    func testRecentRejectsNonFiniteHours() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--hours", "nan"]))
     }
 
     // MARK: - root
 
     func testRootHasAllSubcommands() {
         let names = Cirqueduci.configuration.subcommands.map { $0.configuration.commandName }
-        for expected in ["me", "projects", "pipelines", "workflows", "jobs", "job", "steps",
+        for expected in ["me", "projects", "pipelines", "recent", "workflows", "jobs", "job", "steps",
                          "logs", "artifacts", "tests", "trigger", "approve", "cancel", "rerun", "watch"] {
             XCTAssertTrue(names.contains(expected), "missing subcommand: \(expected)")
         }

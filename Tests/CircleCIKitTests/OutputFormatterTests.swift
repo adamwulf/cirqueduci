@@ -8,13 +8,19 @@ final class OutputFormatterTests: XCTestCase {
     }
 
     func testIDFormat() throws {
+        // Jobs are identified by their integer job_number, never the UUID. Jobs
+        // without a number yet (approval gates, still-blocked jobs) emit "-".
         let output = try OutputFormatter.render(jobs(), format: .id)
         let lines = output.split(separator: "\n").map(String.init)
-        XCTAssertEqual(lines, [
-            "58ae7914-6179-4a77-8b30-d324afaf048f",
-            "9ae3058a-78b7-492a-a3f9-579fa466df15",
-            "bc4fa18b-bcad-4c6f-936a-01938e16583e"
-        ])
+        XCTAssertEqual(lines, ["-", "40796", "-"])
+    }
+
+    func testTableOmitsJobUUID() throws {
+        let output = try OutputFormatter.render(jobs(), format: .table)
+        XCTAssertFalse(output.contains("9ae3058a-78b7-492a-a3f9-579fa466df15"),
+                       "the job UUID must not appear in table output")
+        XCTAssertFalse(output.contains("ID"), "the ID column header must be gone")
+        XCTAssertTrue(output.contains("40796"), "the integer job number is the identifier")
     }
 
     func testTableFormatHasHeaderAndRows() throws {

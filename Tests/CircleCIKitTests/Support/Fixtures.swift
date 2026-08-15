@@ -106,19 +106,6 @@ enum Fixtures {
     }
     """
 
-    static let pipeline = """
-    {
-      "id": "1cfafffe-3869-47c9-8941-b972e5dea8bf",
-      "errors": [],
-      "project_slug": "gh/museapphq/Muse",
-      "number": 12345,
-      "state": "created",
-      "created_at": "2026-08-14T23:40:50.978Z",
-      "updated_at": "2026-08-14T23:40:50.978Z",
-      "vcs": { "branch": "agent/web-snapshot-selection", "revision": "af2f988dc87429afc22f7bcae107610ac82ae97e" }
-    }
-    """
-
     static let workflowsPage = """
     {
       "items": [
@@ -135,23 +122,6 @@ enum Fixtures {
         }
       ],
       "next_page_token": null
-    }
-    """
-
-    static let workflow = """
-    {
-      "id": "d6e3cf7a-5419-4f7a-bb71-91e8370a3f4b",
-      "name": "release-deploy",
-      "status": "on_hold",
-      "pipeline_id": "1cfafffe-3869-47c9-8941-b972e5dea8bf",
-      "pipeline_number": 12345,
-      "project_slug": "gh/museapphq/Muse",
-      "started_by": "98209bd9-c440-45b0-b1d7-749a15860f58",
-      "created_at": "2026-08-14T23:40:51.361Z",
-      "stopped_at": null,
-      "canceled_by": null,
-      "errored_by": null,
-      "tag": null
     }
     """
 

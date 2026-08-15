@@ -15,15 +15,19 @@ struct StubReply {
     var status: Int = 200
     var headers: [String: String] = [:]
     var body: Data
+    /// Simulated response latency, so a poll can be made to return after a
+    /// caller's deadline (used to test timeout fidelity).
+    var delay: TimeInterval = 0
 
-    init(status: Int = 200, headers: [String: String] = [:], body: Data) {
+    init(status: Int = 200, headers: [String: String] = [:], body: Data, delay: TimeInterval = 0) {
         self.status = status
         self.headers = headers
         self.body = body
+        self.delay = delay
     }
 
-    init(status: Int = 200, headers: [String: String] = [:], json: String) {
-        self.init(status: status, headers: headers, body: Data(json.utf8))
+    init(status: Int = 200, headers: [String: String] = [:], json: String, delay: TimeInterval = 0) {
+        self.init(status: status, headers: headers, body: Data(json.utf8), delay: delay)
     }
 }
 
@@ -88,6 +92,9 @@ final class StubTransport: HTTPTransport, @unchecked Sendable {
         requests.append(request)
         for matcher in matchers where matcher.matches(request) {
             let reply = matcher.reply(request)
+            if reply.delay > 0 {
+                try await Task.sleep(nanoseconds: UInt64(reply.delay * 1_000_000_000))
+            }
             return HTTPResponse(status: reply.status, headers: reply.headers, body: reply.body)
         }
         return HTTPResponse(status: 599,
