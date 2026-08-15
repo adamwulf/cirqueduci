@@ -15,6 +15,14 @@ extension CircleCIClient {
         !workflows.isEmpty && workflows.allSatisfy { $0.status.isFinished }
     }
 
+    /// The workflow statuses that count as an unsuccessful outcome.
+    private static let failureStatuses: Set<WorkflowStatus> = [.failed, .error, .canceled, .unauthorized]
+
+    /// True when any workflow ended in an unsuccessful status.
+    public static func anyFailed(_ workflows: [Workflow]) -> Bool {
+        workflows.contains { failureStatuses.contains($0.status) }
+    }
+
     /// Polls a pipeline's workflows until they all finish (or `timeout`
     /// elapses). `onPoll` is called with the current workflows after each fetch.
     /// Returns the final workflow list.

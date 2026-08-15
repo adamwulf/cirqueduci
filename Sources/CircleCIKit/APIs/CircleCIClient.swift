@@ -40,6 +40,7 @@ public final class CircleCIClient {
     /// absent/empty or `limit` items have been collected.
     private func collect<T>(limit: Int,
                             _ fetchPage: (_ pageToken: String?) async -> Result<Paged<T>, CircleCIError>) async throws -> [T] {
+        guard limit > 0 else { return [] }
         var items: [T] = []
         var pageToken: String?
         repeat {

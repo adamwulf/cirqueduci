@@ -40,11 +40,9 @@ struct Cirqueduci: AsyncParsableCommand {
     )
 
     static func main() async {
-        // The env var is read at CircleCIAPI init; fall back to a .env file
-        // discovered by walking up from the current directory (like hunch).
-        if CircleCIAPI.shared.token == nil {
-            CircleCIAPI.shared.token = TokenResolver.fromDotEnv()
-        }
+        // Resolve the token once: the process environment first, then a `.env`
+        // file discovered by walking up from the current directory (like hunch).
+        CircleCIAPI.shared.token = TokenResolver.resolve()
 
         do {
             var command = try parseAsRoot()

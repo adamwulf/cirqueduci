@@ -44,8 +44,8 @@ struct WatchCommand: AsyncParsableCommand {
         if !CircleCIClient.allFinished(workflows) {
             throw ExitCode(2) // timed out before completion
         }
-        if workflows.contains(where: { $0.status == .failed || $0.status == .error }) {
-            throw ExitCode(1) // finished, but at least one workflow failed
+        if CircleCIClient.anyFailed(workflows) {
+            throw ExitCode(1) // finished, but at least one workflow was unsuccessful
         }
     }
 }

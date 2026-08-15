@@ -27,17 +27,21 @@ public final class CircleCIAPI {
     private let baseV11: String
 
     private let maxRetries = 3
-    private let minRetryDelay: TimeInterval = 1.0
-    private let maxRetryDelay: TimeInterval = 60.0
+    private let minRetryDelay: TimeInterval
+    private let maxRetryDelay: TimeInterval
 
     public init(transport: HTTPTransport = URLSessionTransport(),
                 token: String? = TokenResolver.fromEnvironment(),
                 baseV2: String = "https://circleci.com/api/v2",
-                baseV11: String = "https://circleci.com/api/v1.1") {
+                baseV11: String = "https://circleci.com/api/v1.1",
+                minRetryDelay: TimeInterval = 1.0,
+                maxRetryDelay: TimeInterval = 60.0) {
         self.transport = transport
         self.token = token
         self.baseV2 = baseV2
         self.baseV11 = baseV11
+        self.minRetryDelay = minRetryDelay
+        self.maxRetryDelay = maxRetryDelay
     }
 
     // MARK: - URL building
@@ -52,6 +56,13 @@ public final class CircleCIAPI {
             components.queryItems = query
                 .sorted { $0.key < $1.key }
                 .map { URLQueryItem(name: $0.key, value: $0.value) }
+            // URLComponents leaves "+" unescaped, but servers decode it as a
+            // space — which corrupts branch names and base64 page tokens. Force
+            // it to %2B. (queryItems already encodes spaces as %20, so any "+"
+            // here is a literal from the value.)
+            if let encoded = components.percentEncodedQuery {
+                components.percentEncodedQuery = encoded.replacingOccurrences(of: "+", with: "%2B")
+            }
         }
         return components.url
     }
@@ -101,6 +112,11 @@ public final class CircleCIAPI {
                 return await send(method: method, url: url, body: body,
                                   authenticated: authenticated, retryCount: retryCount + 1)
             }
+            // Retries exhausted: surface a 429 as a dedicated rate-limit error.
+            if response.status == 429 {
+                let retryAfter = TimeInterval(response.headers["Retry-After"] ?? "") ?? 0
+                return .failure(.rateLimitExceeded(retryAfter: retryAfter))
+            }
         }
 
         guard (200..<300).contains(response.status) else {
@@ -146,14 +162,14 @@ public final class CircleCIAPI {
 
     // MARK: - Identity
 
-    public func me() async -> Result<Me, CircleCIError> {
+    func me() async -> Result<Me, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "me", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(url: url)
     }
 
-    public func collaborations() async -> Result<[Collaboration], CircleCIError> {
+    func collaborations() async -> Result<[Collaboration], CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "me/collaborations", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -163,14 +179,14 @@ public final class CircleCIAPI {
     // MARK: - Projects
 
     /// Followed projects (v1.1; returns a bare array, not a paged envelope).
-    public func followedProjects() async -> Result<[FollowedProject], CircleCIError> {
+    func followedProjects() async -> Result<[FollowedProject], CircleCIError> {
         guard let url = makeURL(base: baseV11, path: "projects", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(url: url)
     }
 
-    public func project(slug: String) async -> Result<Project, CircleCIError> {
+    func project(slug: String) async -> Result<Project, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "project/\(slug)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -179,7 +195,7 @@ public final class CircleCIAPI {
 
     // MARK: - Pipelines
 
-    public func pipelines(projectSlug: String, branch: String?, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
+    func pipelines(projectSlug: String, branch: String?, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
         var query: [String: String] = [:]
         if let branch = branch { query["branch"] = branch }
         if let pageToken = pageToken { query["page-token"] = pageToken }
@@ -189,7 +205,7 @@ public final class CircleCIAPI {
         return await fetch(url: url)
     }
 
-    public func pipelinesForOrg(orgSlug: String, mine: Bool, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
+    func pipelinesForOrg(orgSlug: String, mine: Bool, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
         var query: [String: String] = ["org-slug": orgSlug]
         if mine { query["mine"] = "true" }
         if let pageToken = pageToken { query["page-token"] = pageToken }
@@ -199,14 +215,14 @@ public final class CircleCIAPI {
         return await fetch(url: url)
     }
 
-    public func pipeline(id: String) async -> Result<Pipeline, CircleCIError> {
+    func pipeline(id: String) async -> Result<Pipeline, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "pipeline/\(id)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(url: url)
     }
 
-    public func triggerPipeline(projectSlug: String, request: TriggerPipelineRequest) async -> Result<TriggerPipelineResponse, CircleCIError> {
+    func triggerPipeline(projectSlug: String, request: TriggerPipelineRequest) async -> Result<TriggerPipelineResponse, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/pipeline", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -220,7 +236,7 @@ public final class CircleCIAPI {
 
     // MARK: - Workflows
 
-    public func workflows(pipelineId: String, pageToken: String?) async -> Result<Paged<Workflow>, CircleCIError> {
+    func workflows(pipelineId: String, pageToken: String?) async -> Result<Paged<Workflow>, CircleCIError> {
         var query: [String: String] = [:]
         if let pageToken = pageToken { query["page-token"] = pageToken }
         guard let url = makeURL(base: baseV2, path: "pipeline/\(pipelineId)/workflow", query: query) else {
@@ -229,21 +245,21 @@ public final class CircleCIAPI {
         return await fetch(url: url)
     }
 
-    public func workflow(id: String) async -> Result<Workflow, CircleCIError> {
+    func workflow(id: String) async -> Result<Workflow, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "workflow/\(id)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(url: url)
     }
 
-    public func cancelWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
+    func cancelWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "workflow/\(id)/cancel", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(method: "POST", url: url)
     }
 
-    public func rerunWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
+    func rerunWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "workflow/\(id)/rerun", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -252,7 +268,7 @@ public final class CircleCIAPI {
 
     // MARK: - Jobs
 
-    public func jobs(workflowId: String, pageToken: String?) async -> Result<Paged<Job>, CircleCIError> {
+    func jobs(workflowId: String, pageToken: String?) async -> Result<Paged<Job>, CircleCIError> {
         var query: [String: String] = [:]
         if let pageToken = pageToken { query["page-token"] = pageToken }
         guard let url = makeURL(base: baseV2, path: "workflow/\(workflowId)/job", query: query) else {
@@ -261,14 +277,14 @@ public final class CircleCIAPI {
         return await fetch(url: url)
     }
 
-    public func approveJob(workflowId: String, approvalRequestId: String) async -> Result<MessageResponse, CircleCIError> {
+    func approveJob(workflowId: String, approvalRequestId: String) async -> Result<MessageResponse, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "workflow/\(workflowId)/approve/\(approvalRequestId)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
         return await fetch(method: "POST", url: url)
     }
 
-    public func jobDetail(projectSlug: String, jobNumber: Int) async -> Result<JobDetail, CircleCIError> {
+    func jobDetail(projectSlug: String, jobNumber: Int) async -> Result<JobDetail, CircleCIError> {
         guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/job/\(jobNumber)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -277,7 +293,7 @@ public final class CircleCIAPI {
 
     /// Per-step breakdown (v1.1). `vcsSlug` uses the long form, e.g.
     /// `github/museapphq/Muse`.
-    public func jobSteps(vcsSlug: String, jobNumber: Int) async -> Result<JobStepsResponse, CircleCIError> {
+    func jobSteps(vcsSlug: String, jobNumber: Int) async -> Result<JobStepsResponse, CircleCIError> {
         guard let url = makeURL(base: baseV11, path: "project/\(vcsSlug)/\(jobNumber)", query: [:]) else {
             return .failure(.invalidEndpoint)
         }
@@ -286,7 +302,7 @@ public final class CircleCIAPI {
 
     // MARK: - Artifacts & Tests
 
-    public func artifacts(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<Artifact>, CircleCIError> {
+    func artifacts(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<Artifact>, CircleCIError> {
         var query: [String: String] = [:]
         if let pageToken = pageToken { query["page-token"] = pageToken }
         guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/\(jobNumber)/artifacts", query: query) else {
@@ -295,7 +311,7 @@ public final class CircleCIAPI {
         return await fetch(url: url)
     }
 
-    public func tests(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<TestResult>, CircleCIError> {
+    func tests(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<TestResult>, CircleCIError> {
         var query: [String: String] = [:]
         if let pageToken = pageToken { query["page-token"] = pageToken }
         guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/\(jobNumber)/tests", query: query) else {
@@ -311,19 +327,21 @@ public final class CircleCIAPI {
     /// URLs on third-party hosts (e.g. s3.amazonaws.com) must NOT, or the token
     /// would leak to that host.
     private func shouldAuthenticate(for url: URL) -> Bool {
-        let host = url.host ?? ""
-        return host.hasSuffix("circleci.com") || host.hasSuffix("circle-artifacts.com")
+        guard let host = url.host?.lowercased() else { return false }
+        // Exact host or a subdomain — NOT a lookalike like "evilcircleci.com".
+        let trusted = ["circleci.com", "circle-artifacts.com"]
+        return trusted.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
     /// Fetches raw bytes from an arbitrary URL (e.g. a pre-signed step
     /// `output_url` or an artifact URL).
-    public func downloadData(from url: URL) async -> Result<Data, CircleCIError> {
+    func downloadData(from url: URL) async -> Result<Data, CircleCIError> {
         let result = await send(url: url, authenticated: shouldAuthenticate(for: url))
         return result.map { $0.body }
     }
 
     /// Fetches a step action's log lines from its pre-signed `output_url`.
-    public func stepLog(outputURL: URL) async -> Result<[LogLine], CircleCIError> {
+    func stepLog(outputURL: URL) async -> Result<[LogLine], CircleCIError> {
         return await fetch([LogLine].self, url: outputURL, authenticated: shouldAuthenticate(for: outputURL))
     }
 }
