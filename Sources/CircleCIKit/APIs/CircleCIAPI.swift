@@ -1,0 +1,347 @@
+//
+//  CircleCIAPI.swift
+//  cirqueduci
+//
+//  The low-level CircleCI client (mirrors hunch's NotionAPI role): holds the
+//  token and the injectable HTTP transport, builds each request with the
+//  Circle-Token header, and returns ONE page as Result<Model, CircleCIError>.
+//  Retry/backoff for 429/5xx lives here; pagination lives in the facade
+//  (CircleCIClient). Unlike hunch's private-init singleton, the initializer is
+//  public and takes the transport so tests can inject canned JSON offline.
+//
+
+import Foundation
+
+public final class CircleCIAPI {
+
+    /// Convenience singleton for the CLI target (real transport + resolved token).
+    public static let shared = CircleCIAPI()
+
+    /// Optional log hook: (level, message, context). Mirrors hunch's logHandler.
+    public static var logHandler: ((_ level: String, _ message: String, _ context: [String: Any]?) -> Void)?
+
+    public var token: String?
+    private let transport: HTTPTransport
+
+    private let baseV2: String
+    private let baseV11: String
+
+    private let maxRetries = 3
+    private let minRetryDelay: TimeInterval
+    private let maxRetryDelay: TimeInterval
+
+    public init(transport: HTTPTransport = URLSessionTransport(),
+                token: String? = TokenResolver.fromEnvironment(),
+                baseV2: String = "https://circleci.com/api/v2",
+                baseV11: String = "https://circleci.com/api/v1.1",
+                minRetryDelay: TimeInterval = 1.0,
+                maxRetryDelay: TimeInterval = 60.0) {
+        self.transport = transport
+        self.token = token
+        self.baseV2 = baseV2
+        self.baseV11 = baseV11
+        self.minRetryDelay = minRetryDelay
+        self.maxRetryDelay = maxRetryDelay
+    }
+
+    // MARK: - URL building
+
+    private func makeURL(base: String, path: String, query: [String: String]) -> URL? {
+        var urlString = base
+        if !path.isEmpty {
+            urlString += "/" + path
+        }
+        guard var components = URLComponents(string: urlString) else { return nil }
+        if !query.isEmpty {
+            components.queryItems = query
+                .sorted { $0.key < $1.key }
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+            // URLComponents leaves "+" unescaped, but servers decode it as a
+            // space — which corrupts branch names and base64 page tokens. Force
+            // it to %2B. (queryItems already encodes spaces as %20, so any "+"
+            // here is a literal from the value.)
+            if let encoded = components.percentEncodedQuery {
+                components.percentEncodedQuery = encoded.replacingOccurrences(of: "+", with: "%2B")
+            }
+        }
+        return components.url
+    }
+
+    // MARK: - Request core
+
+    /// Issues a request (with retry/backoff) and returns the raw response.
+    /// A missing token short-circuits to `.missingToken` before any network,
+    /// unless `authenticated` is false (used for pre-signed downloads).
+    func send(method: String = "GET",
+              url: URL,
+              body: Data? = nil,
+              authenticated: Bool = true,
+              retryCount: Int = 0) async -> Result<HTTPResponse, CircleCIError> {
+        var headers: [String: String] = [
+            "Accept": "application/json"
+        ]
+        if authenticated {
+            guard let token = token, !token.isEmpty else {
+                return .failure(.missingToken)
+            }
+            headers["Circle-Token"] = token
+        }
+        if body != nil {
+            headers["Content-Type"] = "application/json"
+        }
+
+        let request = HTTPRequest(method: method, url: url, headers: headers, body: body)
+
+        let response: HTTPResponse
+        do {
+            response = try await transport.send(request)
+        } catch {
+            return .failure(.apiError(error))
+        }
+
+        if response.status == 429 || (500...599).contains(response.status) {
+            if retryCount < maxRetries {
+                let retryAfter = TimeInterval(response.headers["Retry-After"] ?? "") ?? 0
+                let backoff = min(maxRetryDelay, minRetryDelay * pow(2.0, Double(retryCount)))
+                let delay = max(retryAfter, backoff)
+                Self.logHandler?("error", "\(response.status) error, retrying after \(delay)s",
+                                 ["attempt": retryCount + 1, "status": response.status, "url": url.absoluteString])
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+                return await send(method: method, url: url, body: body,
+                                  authenticated: authenticated, retryCount: retryCount + 1)
+            }
+            // Retries exhausted: surface a 429 as a dedicated rate-limit error.
+            if response.status == 429 {
+                let retryAfter = TimeInterval(response.headers["Retry-After"] ?? "") ?? 0
+                return .failure(.rateLimitExceeded(retryAfter: retryAfter))
+            }
+        }
+
+        guard (200..<300).contains(response.status) else {
+            let message = String(data: response.body, encoding: .utf8)
+            Self.logHandler?("error", "CircleCI API error", ["status": response.status, "url": url.absoluteString])
+            return .failure(.invalidResponseStatus(response.status, message: message))
+        }
+
+        Self.logHandler?("debug", "circleci_api", ["status": response.status, "url": url.absoluteString])
+        return .success(response)
+    }
+
+    /// Issues a request and decodes the JSON body as `T`.
+    func fetch<T: Decodable>(_ type: T.Type = T.self,
+                             method: String = "GET",
+                             url: URL,
+                             body: Data? = nil,
+                             authenticated: Bool = true) async -> Result<T, CircleCIError> {
+        let result = await send(method: method, url: url, body: body, authenticated: authenticated)
+        switch result {
+        case .success(let response):
+            if response.body.isEmpty {
+                return .failure(.noData)
+            }
+            do {
+                let value = try CircleCIJSON.decoder.decode(T.self, from: response.body)
+                return .success(value)
+            } catch {
+                return .failure(.decodeError(error, context: url.path))
+            }
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+
+    private func encode<T: Encodable>(_ value: T) -> Result<Data, CircleCIError> {
+        do {
+            return .success(try CircleCIJSON.encoder.encode(value))
+        } catch {
+            return .failure(.encodeError(error))
+        }
+    }
+
+    // MARK: - Identity
+
+    func me() async -> Result<Me, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "me", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func collaborations() async -> Result<[Collaboration], CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "me/collaborations", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    // MARK: - Projects
+
+    /// Followed projects (v1.1; returns a bare array, not a paged envelope).
+    func followedProjects() async -> Result<[FollowedProject], CircleCIError> {
+        guard let url = makeURL(base: baseV11, path: "projects", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func project(slug: String) async -> Result<Project, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "project/\(slug)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    // MARK: - Pipelines
+
+    func pipelines(projectSlug: String, branch: String?, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
+        var query: [String: String] = [:]
+        if let branch = branch { query["branch"] = branch }
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/pipeline", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func pipelinesForOrg(orgSlug: String, mine: Bool, pageToken: String?) async -> Result<Paged<Pipeline>, CircleCIError> {
+        var query: [String: String] = ["org-slug": orgSlug]
+        if mine { query["mine"] = "true" }
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "pipeline", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func pipeline(id: String) async -> Result<Pipeline, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "pipeline/\(id)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func triggerPipeline(projectSlug: String, request: TriggerPipelineRequest) async -> Result<TriggerPipelineResponse, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/pipeline", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        switch encode(request) {
+        case .success(let data):
+            return await fetch(method: "POST", url: url, body: data)
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+
+    // MARK: - Workflows
+
+    func workflows(pipelineId: String, pageToken: String?) async -> Result<Paged<Workflow>, CircleCIError> {
+        var query: [String: String] = [:]
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "pipeline/\(pipelineId)/workflow", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func workflow(id: String) async -> Result<Workflow, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "workflow/\(id)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func cancelWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "workflow/\(id)/cancel", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(method: "POST", url: url)
+    }
+
+    func rerunWorkflow(id: String) async -> Result<MessageResponse, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "workflow/\(id)/rerun", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(method: "POST", url: url)
+    }
+
+    // MARK: - Jobs
+
+    func jobs(workflowId: String, pageToken: String?) async -> Result<Paged<Job>, CircleCIError> {
+        var query: [String: String] = [:]
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "workflow/\(workflowId)/job", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func approveJob(workflowId: String, approvalRequestId: String) async -> Result<MessageResponse, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "workflow/\(workflowId)/approve/\(approvalRequestId)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(method: "POST", url: url)
+    }
+
+    func jobDetail(projectSlug: String, jobNumber: Int) async -> Result<JobDetail, CircleCIError> {
+        guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/job/\(jobNumber)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    /// Per-step breakdown (v1.1). `vcsSlug` uses the long form, e.g.
+    /// `github/museapphq/Muse`.
+    func jobSteps(vcsSlug: String, jobNumber: Int) async -> Result<JobStepsResponse, CircleCIError> {
+        guard let url = makeURL(base: baseV11, path: "project/\(vcsSlug)/\(jobNumber)", query: [:]) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    // MARK: - Artifacts & Tests
+
+    func artifacts(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<Artifact>, CircleCIError> {
+        var query: [String: String] = [:]
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/\(jobNumber)/artifacts", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    func tests(projectSlug: String, jobNumber: Int, pageToken: String?) async -> Result<Paged<TestResult>, CircleCIError> {
+        var query: [String: String] = [:]
+        if let pageToken = pageToken { query["page-token"] = pageToken }
+        guard let url = makeURL(base: baseV2, path: "project/\(projectSlug)/\(jobNumber)/tests", query: query) else {
+            return .failure(.invalidEndpoint)
+        }
+        return await fetch(url: url)
+    }
+
+    // MARK: - Raw downloads (step logs, artifacts)
+
+    /// Whether to attach the Circle-Token when fetching `url`. Only CircleCI's
+    /// own hosts (circleci.com, circle-artifacts.com) get the token; pre-signed
+    /// URLs on third-party hosts (e.g. s3.amazonaws.com) must NOT, or the token
+    /// would leak to that host.
+    private func shouldAuthenticate(for url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        // Exact host or a subdomain — NOT a lookalike like "evilcircleci.com".
+        let trusted = ["circleci.com", "circle-artifacts.com"]
+        return trusted.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    /// Fetches raw bytes from an arbitrary URL (e.g. a pre-signed step
+    /// `output_url` or an artifact URL).
+    func downloadData(from url: URL) async -> Result<Data, CircleCIError> {
+        let result = await send(url: url, authenticated: shouldAuthenticate(for: url))
+        return result.map { $0.body }
+    }
+
+    /// Fetches a step action's log lines from its pre-signed `output_url`.
+    func stepLog(outputURL: URL) async -> Result<[LogLine], CircleCIError> {
+        return await fetch([LogLine].self, url: outputURL, authenticated: shouldAuthenticate(for: outputURL))
+    }
+}
