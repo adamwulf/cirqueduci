@@ -78,6 +78,22 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertFalse(job.status.isFinished, "a still-running job must not be reported finished")
     }
 
+    func testWaitForJobFinishIsNotMisclassifiedWhenCallbackBlocksPastDeadline() async throws {
+        // The response arrives finished within budget, but the onPoll callback
+        // blocks past the deadline. Classification uses the arrival time, so this
+        // is a finish, not a timeout.
+        let success = "{ \"number\": 1, \"name\": \"j\", \"status\": \"success\" }"
+        let stub = StubTransport().on("/job/", json: success)
+        let client = makeClient(stub)
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                                  pollInterval: 0, timeout: 0.1) { _ in
+            Thread.sleep(forTimeInterval: 0.25) // block the callback past the deadline
+        }
+        guard case .finished = outcome else {
+            return XCTFail("an in-window finish must survive a slow callback, got \(outcome)")
+        }
+    }
+
     func testWaitForJobTimesOutWhenInitialPollReturnsAfterDeadline() async throws {
         // The very first poll takes longer than the whole timeout and returns
         // success. That completion arrived after the deadline, so it is a timeout.

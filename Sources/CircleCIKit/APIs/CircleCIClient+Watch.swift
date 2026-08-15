@@ -53,20 +53,21 @@ extension CircleCIClient {
                            timeout: TimeInterval = 1800,
                            onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobWaitOutcome {
         let deadline = Date().addingTimeInterval(timeout)
-        var job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
-        onPoll?(job)
         while true {
-            // Ordering matters: a status observed after the deadline is a
-            // timeout regardless of whether it is terminal.
-            if Date() >= deadline {
+            let job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+            // Timestamp the moment the response arrived, before `onPoll` runs, so
+            // a slow callback can never turn an in-window observation into a
+            // false timeout. A status seen after the deadline — on any poll,
+            // including the first — is a timeout regardless of terminal-ness.
+            let observedAt = Date()
+            onPoll?(job)
+            if observedAt >= deadline {
                 return .timedOut(job)
             }
             if job.status.isFinished {
                 return .finished(job)
             }
             try await Self.nap(min(pollInterval, deadline.timeIntervalSinceNow))
-            job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
-            onPoll?(job)
         }
     }
 }
