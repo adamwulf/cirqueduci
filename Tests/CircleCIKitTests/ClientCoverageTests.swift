@@ -118,7 +118,7 @@ final class ClientCoverageTests: XCTestCase {
 
     // MARK: - Recent activity overview
 
-    func testRecentActivityStopsAtWindowAndAttachesWorkflows() async throws {
+    func testRecentActivityFiltersOutOfWindowAndAttachesWorkflows() async throws {
         let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
         let pipelinesJSON = """
         { "items": [
@@ -176,7 +176,7 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertFalse(activity.first?.isActive ?? true)
     }
 
-    func testRecentActivityFollowsNextPageTokenAndStopsAtWindow() async throws {
+    func testRecentActivityFollowsNextPageTokenAndFiltersByWindow() async throws {
         let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
         let page1 = """
         { "items": [
@@ -198,13 +198,40 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         let activity = try await client.recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
-        XCTAssertEqual(activity.map { $0.pipeline.id }, ["pA", "pB"], "spans pages, stops at the out-of-window pipeline")
+        XCTAssertEqual(activity.map { $0.pipeline.id }, ["pA", "pB"], "spans pages, keeps only in-window pipelines")
         let listRequests = stub.requests.filter {
             $0.url.absoluteString.contains("/pipeline") && !$0.url.absoluteString.contains("/workflow")
         }
         XCTAssertEqual(listRequests.count, 2, "must follow next_page_token to the second page")
         XCTAssertFalse(stub.requests.contains { $0.url.absoluteString.contains("pC") },
                        "must not fetch workflows for a pipeline outside the window")
+    }
+
+    func testRecentActivityKeepsRecentlyRerunOldPipelineBelowTheBoundary() async throws {
+        // The list is ordered by creation, so an old pipeline rerun today sits
+        // BELOW a pipeline last updated just before the window. Early-stopping on
+        // the first out-of-window entry would wrongly drop the rerun; filtering
+        // each pipeline independently keeps it.
+        let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
+        let page = """
+        { "items": [
+            { "id": "pTop", "number": 3, "errors": [], "state": "created",
+              "created_at": "2026-08-14T20:00:00.000Z", "updated_at": "2026-08-14T20:05:00.000Z" },
+            { "id": "pMid", "number": 2, "errors": [], "state": "created",
+              "created_at": "2026-08-13T23:00:00.000Z", "updated_at": "2026-08-13T23:30:00.000Z" },
+            { "id": "pRerun", "number": 1, "errors": [], "state": "created",
+              "created_at": "2026-08-10T00:00:00.000Z", "updated_at": "2026-08-14T21:00:00.000Z" }
+          ], "next_page_token": null }
+        """
+        let emptyWorkflows = "{ \"items\": [], \"next_page_token\": null }"
+        let stub = StubTransport()
+            .on("/workflow", json: emptyWorkflows)
+            .on(where: { $0.url.absoluteString.contains("/pipeline") && !$0.url.absoluteString.contains("/workflow") }) { _ in StubReply(json: page) }
+        let client = makeClient(stub)
+
+        let activity = try await client.recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
+        XCTAssertEqual(activity.map { $0.pipeline.id }, ["pTop", "pRerun"],
+                       "the recently rerun old pipeline must survive even though an out-of-window one precedes it")
     }
 
     func testRecentActivityIncludesBoundaryAndRespectsCap() async throws {

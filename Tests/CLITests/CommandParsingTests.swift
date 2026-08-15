@@ -138,6 +138,12 @@ final class CommandParsingTests: XCTestCase {
         XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--timeout=-5"]))
     }
 
+    func testWatchRejectsNonFiniteIntervalAndTimeout() {
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "nan"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "inf"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--timeout", "nan"]))
+    }
+
     // MARK: - recent defaults
 
     func testRecentDefaults() throws {
@@ -158,6 +164,10 @@ final class CommandParsingTests: XCTestCase {
 
     func testRecentRejectsZeroLimit() {
         XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--limit", "0"]))
+    }
+
+    func testRecentRejectsNonFiniteHours() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--hours", "nan"]))
     }
 
     // MARK: - root

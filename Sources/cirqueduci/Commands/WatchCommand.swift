@@ -29,11 +29,11 @@ struct WatchCommand: AsyncParsableCommand {
     var format: OutputFormat = .table
 
     func validate() throws {
-        if interval <= 0 {
-            throw ValidationError("--interval must be greater than 0.")
+        if !interval.isFinite || interval <= 0 {
+            throw ValidationError("--interval must be a finite number greater than 0.")
         }
-        if timeout < 0 {
-            throw ValidationError("--timeout must be 0 or greater.")
+        if !timeout.isFinite || timeout < 0 {
+            throw ValidationError("--timeout must be a finite number 0 or greater.")
         }
     }
 

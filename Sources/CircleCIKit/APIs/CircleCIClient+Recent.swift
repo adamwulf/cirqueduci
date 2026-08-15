@@ -51,17 +51,24 @@ public struct PipelineActivity: Encodable {
 
 extension CircleCIClient {
 
-    /// Pipelines for a project whose most-recent activity (`updated_at`, falling
-    /// back to `created_at`) is at or after `since`, each paired with its current
-    /// workflows. Newest first. Stops paging as soon as a pipeline older than
-    /// `since` is seen, and never scans more than `maxPipelines`.
+    /// Pipelines among the most recently created `maxPipelines` whose activity
+    /// (`updated_at`, falling back to `created_at`) is at or after `since`, each
+    /// paired with its current workflows, newest first.
+    ///
+    /// The list endpoint is ordered by pipeline creation, not by update, so a
+    /// recently *re-run* old pipeline can sit far down the list. We therefore
+    /// cannot stop at the first out-of-window entry — we scan up to
+    /// `maxPipelines` and filter each independently. `maxPipelines` bounds how
+    /// far back (in creation order) that scan reaches.
     public func recentActivity(projectSlug: String,
                                since: Date,
                                maxPipelines: Int = 50) async throws -> [PipelineActivity] {
         guard maxPipelines > 0 else { return [] }
 
-        // 1. Page newest-first, stopping at the first pipeline older than `since`.
+        // 1. Scan the newest `maxPipelines` pipelines, keeping those active since
+        //    `since`. Every inspected pipeline counts toward the scan cap.
         var recent: [Pipeline] = []
+        var scanned = 0
         var pageToken: String?
         paging: repeat {
             let page = try (await api.pipelines(projectSlug: projectSlug,
@@ -69,14 +76,16 @@ extension CircleCIClient {
                                                 pageToken: pageToken)).get()
             for pipeline in page.items {
                 let stamp = pipeline.updatedAt ?? pipeline.createdAt
-                if let stamp = stamp, stamp < since { break paging }
-                recent.append(pipeline)
-                if recent.count >= maxPipelines { break paging }
+                if let stamp = stamp, stamp >= since {
+                    recent.append(pipeline)
+                }
+                scanned += 1
+                if scanned >= maxPipelines { break paging }
             }
             pageToken = (page.nextPageToken?.isEmpty == false) ? page.nextPageToken : nil
         } while pageToken != nil
 
-        // 2. Attach each pipeline's workflows.
+        // 2. Attach each kept pipeline's workflows.
         var activity: [PipelineActivity] = []
         for pipeline in recent {
             let workflows = try await self.workflows(pipelineId: pipeline.id)

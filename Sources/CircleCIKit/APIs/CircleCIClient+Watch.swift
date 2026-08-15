@@ -38,8 +38,9 @@ extension CircleCIClient {
                                 timeout: TimeInterval = 1800,
                                 onPoll: (([Workflow]) -> Void)? = nil) async throws -> [Workflow] {
         let deadline = Date().addingTimeInterval(timeout)
-        while true {
-            let workflows = try await self.workflows(pipelineId: id)
+        var workflows: [Workflow]
+        repeat {
+            workflows = try await self.workflows(pipelineId: id)
             onPoll?(workflows)
 
             if Self.allFinished(workflows) {
@@ -47,10 +48,13 @@ extension CircleCIClient {
             }
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 {
-                return workflows
+                break
             }
             try await Self.nap(min(pollInterval, remaining))
-        }
+            // Re-check the deadline after sleeping: a completion observed only
+            // on a post-deadline fetch must not mask the timeout.
+        } while Date() < deadline
+        return workflows
     }
 
     /// Polls one build job (by project + number) until it reaches a terminal
@@ -63,8 +67,9 @@ extension CircleCIClient {
                            timeout: TimeInterval = 1800,
                            onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobDetail {
         let deadline = Date().addingTimeInterval(timeout)
-        while true {
-            let job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+        var job: JobDetail
+        repeat {
+            job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
             onPoll?(job)
 
             if job.status.isFinished {
@@ -72,9 +77,12 @@ extension CircleCIClient {
             }
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 {
-                return job
+                break
             }
             try await Self.nap(min(pollInterval, remaining))
-        }
+            // Re-check the deadline after sleeping: a completion observed only
+            // on a post-deadline fetch must not mask the timeout.
+        } while Date() < deadline
+        return job
     }
 }

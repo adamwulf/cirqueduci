@@ -60,7 +60,7 @@ extension PipelineActivity: CircleCIRow {
             pipeline.id
         ]
     }
-    // The pipeline UUID is a valid input to `workflows`/`watch`, so it stays the id.
+    // The pipeline UUID is a valid input to `workflows`, so it stays the id.
     public var idValue: String { pipeline.id }
 }
 

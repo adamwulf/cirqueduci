@@ -30,8 +30,8 @@ struct RecentCommand: AsyncParsableCommand {
     var format: OutputFormat = .table
 
     func validate() throws {
-        if hours <= 0 {
-            throw ValidationError("--hours must be greater than 0.")
+        if !hours.isFinite || hours <= 0 {
+            throw ValidationError("--hours must be a finite number greater than 0.")
         }
         if limit < 1 {
             throw ValidationError("--limit must be at least 1.")
