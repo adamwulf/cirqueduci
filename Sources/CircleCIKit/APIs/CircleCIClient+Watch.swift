@@ -1,0 +1,40 @@
+//
+//  CircleCIClient+Watch.swift
+//  cirqueduci
+//
+//  Polling a pipeline's workflows until they all finish is real logic, so it
+//  lives in the library. The CLI supplies a callback to render each poll.
+//
+
+import Foundation
+
+extension CircleCIClient {
+
+    /// True once every workflow in the list has reached a terminal status.
+    public static func allFinished(_ workflows: [Workflow]) -> Bool {
+        !workflows.isEmpty && workflows.allSatisfy { $0.status.isFinished }
+    }
+
+    /// Polls a pipeline's workflows until they all finish (or `timeout`
+    /// elapses). `onPoll` is called with the current workflows after each fetch.
+    /// Returns the final workflow list.
+    @discardableResult
+    public func waitForPipeline(id: String,
+                                pollInterval: TimeInterval = 5,
+                                timeout: TimeInterval = 1800,
+                                onPoll: (([Workflow]) -> Void)? = nil) async throws -> [Workflow] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            let workflows = try await self.workflows(pipelineId: id)
+            onPoll?(workflows)
+
+            if Self.allFinished(workflows) {
+                return workflows
+            }
+            if Date() >= deadline {
+                return workflows
+            }
+            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+        }
+    }
+}
