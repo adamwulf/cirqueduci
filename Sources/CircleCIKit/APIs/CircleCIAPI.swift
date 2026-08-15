@@ -306,18 +306,24 @@ public final class CircleCIAPI {
 
     // MARK: - Raw downloads (step logs, artifacts)
 
+    /// Whether to attach the Circle-Token when fetching `url`. Only CircleCI's
+    /// own hosts (circleci.com, circle-artifacts.com) get the token; pre-signed
+    /// URLs on third-party hosts (e.g. s3.amazonaws.com) must NOT, or the token
+    /// would leak to that host.
+    private func shouldAuthenticate(for url: URL) -> Bool {
+        let host = url.host ?? ""
+        return host.hasSuffix("circleci.com") || host.hasSuffix("circle-artifacts.com")
+    }
+
     /// Fetches raw bytes from an arbitrary URL (e.g. a pre-signed step
-    /// `output_url` or an artifact URL). Sends the Circle-Token only when the
-    /// host is circleci.com; pre-signed S3/artifact URLs need no auth.
+    /// `output_url` or an artifact URL).
     public func downloadData(from url: URL) async -> Result<Data, CircleCIError> {
-        let needsAuth = (url.host ?? "").hasSuffix("circleci.com")
-        let result = await send(url: url, authenticated: needsAuth)
+        let result = await send(url: url, authenticated: shouldAuthenticate(for: url))
         return result.map { $0.body }
     }
 
     /// Fetches a step action's log lines from its pre-signed `output_url`.
     public func stepLog(outputURL: URL) async -> Result<[LogLine], CircleCIError> {
-        let needsAuth = (outputURL.host ?? "").hasSuffix("circleci.com")
-        return await fetch([LogLine].self, url: outputURL, authenticated: needsAuth)
+        return await fetch([LogLine].self, url: outputURL, authenticated: shouldAuthenticate(for: outputURL))
     }
 }
