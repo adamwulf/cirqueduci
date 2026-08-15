@@ -144,6 +144,12 @@ final class CommandParsingTests: XCTestCase {
         XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout", "nan"]))
     }
 
+    func testWatchRejectsAbsurdlyLargeIntervalAndTimeout() {
+        // Beyond the sane upper bound (would overflow the nanosecond sleep math).
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "20000000000"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout", "20000000000"]))
+    }
+
     // MARK: - recent defaults
 
     func testRecentDefaults() throws {

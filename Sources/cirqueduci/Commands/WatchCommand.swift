@@ -25,17 +25,21 @@ struct WatchCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Output format for the final snapshot.")
     var format: OutputFormat = .table
 
+    // Generous upper bound (365 days) that keeps the poll sleeps well within the
+    // nanosecond range and rejects absurd values with a clear message.
+    private static let maxSeconds: Double = 31_536_000
+
     func validate() throws {
-        if !interval.isFinite || interval <= 0 {
-            throw ValidationError("--interval must be a finite number greater than 0.")
+        if !interval.isFinite || interval <= 0 || interval > Self.maxSeconds {
+            throw ValidationError("--interval must be a finite number between 0 and \(Int(Self.maxSeconds)) seconds.")
         }
-        if !timeout.isFinite || timeout < 0 {
-            throw ValidationError("--timeout must be a finite number 0 or greater.")
+        if !timeout.isFinite || timeout < 0 || timeout > Self.maxSeconds {
+            throw ValidationError("--timeout must be a finite number between 0 and \(Int(Self.maxSeconds)) seconds.")
         }
     }
 
     func run() async throws {
-        let job = try await CircleCIClient.shared.waitForJob(
+        let outcome = try await CircleCIClient.shared.waitForJob(
             projectSlug: locator.project,
             jobNumber: locator.jobNumber,
             pollInterval: interval,
@@ -45,12 +49,14 @@ struct WatchCommand: AsyncParsableCommand {
         }
 
         // Final snapshot to stdout.
-        try Cirqueduci.emit([job], format: format)
-        if !job.status.isFinished {
-            throw ExitCode(2) // timed out before completion
-        }
-        if job.status.isFailure {
+        try Cirqueduci.emit([outcome.job], format: format)
+        switch outcome {
+        case .timedOut:
+            throw ExitCode(2) // budget elapsed before a terminal status was observed
+        case .finished(let job) where job.status.isFailure:
             throw ExitCode(1) // finished in a genuine failure (not_run/retried pass)
+        case .finished:
+            break
         }
     }
 

@@ -8,47 +8,65 @@
 
 import Foundation
 
+/// The result of waiting on a job. A terminal status counts only if it is
+/// observed within the timeout budget; anything else (including a completion
+/// seen only on a post-deadline poll) is a timeout carrying the last snapshot.
+public enum JobWaitOutcome {
+    case finished(JobDetail)
+    case timedOut(JobDetail)
+
+    /// The most recent job snapshot, whatever the outcome.
+    public var job: JobDetail {
+        switch self {
+        case .finished(let job), .timedOut(let job): return job
+        }
+    }
+}
+
 extension CircleCIClient {
 
+    /// The longest a single sleep is allowed to be (~292 years). Keeps the
+    /// `TimeInterval → UInt64` nanosecond conversion from trapping on absurdly
+    /// large intervals/timeouts.
+    private static let maxSleepNanoseconds: UInt64 = 9_000_000_000_000_000_000
+
     /// Sleeps `seconds`, but never a non-positive amount (which would trap the
-    /// `UInt64` conversion and, at 0, busy-spin). Callers pass the time left
-    /// until the deadline so a poll never overshoots the caller's timeout.
+    /// `UInt64` conversion and, at 0, busy-spin) and never more than
+    /// `maxSleepNanoseconds` (which would overflow it). Callers pass the time
+    /// left until the deadline so a poll never overshoots the caller's timeout.
     private static func nap(_ seconds: TimeInterval) async throws {
         guard seconds > 0 else { return }
-        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        let nanos = seconds * 1_000_000_000
+        let capped = nanos >= Double(maxSleepNanoseconds) ? maxSleepNanoseconds : UInt64(nanos)
+        try await Task.sleep(nanoseconds: capped)
     }
 
     /// Polls one build job (by project + number) until it reaches a terminal
-    /// status (or `timeout` elapses). `onPoll` is called with the current job
-    /// detail after each fetch. Returns the final job detail.
+    /// status within the `timeout` budget, or the budget elapses. `onPoll` is
+    /// called with the current job detail after each fetch. A poll — even the
+    /// first — that returns after the deadline is a timeout, so a slow request
+    /// or retry backoff can never make a late completion read as success.
     @discardableResult
     public func waitForJob(projectSlug: String,
                            jobNumber: Int,
                            pollInterval: TimeInterval = 60,
                            timeout: TimeInterval = 1800,
-                           onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobDetail {
+                           onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobWaitOutcome {
         let deadline = Date().addingTimeInterval(timeout)
-        var lastInWindow = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
-        onPoll?(lastInWindow)
+        var job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+        onPoll?(job)
         while true {
-            if lastInWindow.status.isFinished {
-                return lastInWindow
-            }
-            let remaining = deadline.timeIntervalSinceNow
-            if remaining <= 0 {
-                return lastInWindow // out of budget, still running -> timeout
-            }
-            try await Self.nap(min(pollInterval, remaining))
-
-            let observed = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
-            onPoll?(observed)
+            // Ordering matters: a status observed after the deadline is a
+            // timeout regardless of whether it is terminal.
             if Date() >= deadline {
-                // This poll returned after the deadline — a slow request or retry
-                // backoff can overrun it. Honor the timeout: a completion seen
-                // only now must not count, so report the last in-window state.
-                return observed.status.isFinished ? lastInWindow : observed
+                return .timedOut(job)
             }
-            lastInWindow = observed
+            if job.status.isFinished {
+                return .finished(job)
+            }
+            try await Self.nap(min(pollInterval, deadline.timeIntervalSinceNow))
+            job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+            onPoll?(job)
         }
     }
 }

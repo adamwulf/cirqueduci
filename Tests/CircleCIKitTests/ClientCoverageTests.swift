@@ -59,11 +59,11 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         var pollCount = 0
-        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
-                                              pollInterval: 0, timeout: 5) { _ in pollCount += 1 }
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
+                                                  pollInterval: 0, timeout: 5) { _ in pollCount += 1 }
         XCTAssertEqual(pollCount, 2)
+        guard case .finished(let job) = outcome else { return XCTFail("expected finished, got \(outcome)") }
         XCTAssertEqual(job.status, .success)
-        XCTAssertTrue(job.status.isFinished)
     }
 
     func testWaitForJobTimesOutWhileRunning() async throws {
@@ -72,9 +72,25 @@ final class ClientCoverageTests: XCTestCase {
         """
         let stub = StubTransport().on("/job/", json: running)
         let client = makeClient(stub)
-        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
-                                              pollInterval: 0, timeout: 0)
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
+                                                  pollInterval: 0, timeout: 0)
+        guard case .timedOut(let job) = outcome else { return XCTFail("expected timedOut, got \(outcome)") }
         XCTAssertFalse(job.status.isFinished, "a still-running job must not be reported finished")
+    }
+
+    func testWaitForJobTimesOutWhenInitialPollReturnsAfterDeadline() async throws {
+        // The very first poll takes longer than the whole timeout and returns
+        // success. That completion arrived after the deadline, so it is a timeout.
+        let success = "{ \"number\": 1, \"name\": \"j\", \"status\": \"success\" }"
+        let stub = StubTransport().on(where: { $0.url.absoluteString.contains("/job/") }) { _ in
+            StubReply(json: success, delay: 0.3)
+        }
+        let client = makeClient(stub)
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                                  pollInterval: 0, timeout: 0.1)
+        guard case .timedOut = outcome else {
+            return XCTFail("a success observed only after the deadline must be a timeout, got \(outcome)")
+        }
     }
 
     // MARK: - Recent activity overview
@@ -243,10 +259,10 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         let start = Date()
-        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
-                                              pollInterval: 10, timeout: 0.2)
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                                  pollInterval: 10, timeout: 0.2)
         let elapsed = Date().timeIntervalSince(start)
-        XCTAssertFalse(job.status.isFinished)
+        guard case .timedOut = outcome else { return XCTFail("expected timedOut, got \(outcome)") }
         XCTAssertLessThan(elapsed, 3, "must return near the 0.2s timeout, not sleep the 10s interval")
     }
 
@@ -263,10 +279,11 @@ final class ClientCoverageTests: XCTestCase {
         }
         let client = makeClient(stub)
 
-        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
-                                              pollInterval: 0, timeout: 0.1)
-        XCTAssertFalse(job.status.isFinished,
-                       "a success seen only after the deadline must be reported as a timeout")
+        let outcome = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                                  pollInterval: 0, timeout: 0.1)
+        guard case .timedOut = outcome else {
+            return XCTFail("a success seen only after the deadline must be a timeout, got \(outcome)")
+        }
     }
 
     // MARK: - Artifact download + traversal guard
