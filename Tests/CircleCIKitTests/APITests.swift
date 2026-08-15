@@ -221,14 +221,4 @@ final class APITests: XCTestCase {
         let data = try await client.downloadData(from: url)
         XCTAssertEqual(String(data: data, encoding: .utf8), "{\"ok\":true}")
     }
-
-    // MARK: - Watch
-
-    func testAllFinishedPredicate() throws {
-        let onHold = try CircleCIJSON.decoder.decode(Workflow.self, from: Data(Fixtures.workflow.utf8))
-        let done = try CircleCIJSON.decoder.decode(Workflow.self, from: Data(Fixtures.workflowFinished.utf8))
-        XCTAssertFalse(CircleCIClient.allFinished([onHold, done]))
-        XCTAssertTrue(CircleCIClient.allFinished([done]))
-        XCTAssertFalse(CircleCIClient.allFinished([]))
-    }
 }

@@ -71,13 +71,6 @@ public struct WorkflowStatus: StringWrapped {
 
     /// True while the workflow is still progressing or waiting for approval.
     public var isRunning: Bool { !isFinished }
-
-    /// The statuses that count as a genuine failure. `not_run` is deliberately
-    /// excluded: a skipped workflow is ignored, not a failure.
-    private static let failures: Set<WorkflowStatus> = [.failed, .error, .canceled, .unauthorized]
-
-    /// True when the workflow ended in a genuine failure (so `watch` exits 1).
-    public var isFailure: Bool { Self.failures.contains(self) }
 }
 
 /// Job `.status`.

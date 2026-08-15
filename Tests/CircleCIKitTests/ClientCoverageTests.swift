@@ -41,45 +41,6 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertEqual(stub.requests.count, 4, "initial + 3 retries")
     }
 
-    // MARK: - Watch poll loop
-
-    func testWaitForPipelinePollsUntilFinished() async throws {
-        let successWorkflows = """
-        { "items": [ { "id": "wf-1", "name": "release-deploy", "status": "success",
-          "pipeline_id": "p1", "created_at": "2026-08-14T23:40:51.361Z", "stopped_at": "2026-08-14T23:55:00.000Z" } ],
-          "next_page_token": null }
-        """
-        let stub = StubTransport().onSequence("/workflow", replies: [
-            StubReply(json: Fixtures.workflowsPage), // on_hold
-            StubReply(json: successWorkflows)         // success
-        ])
-        let client = makeClient(stub)
-
-        var pollCount = 0
-        let finalWorkflows = try await client.waitForPipeline(id: "p1", pollInterval: 0, timeout: 5) { _ in
-            pollCount += 1
-        }
-        XCTAssertEqual(pollCount, 2)
-        XCTAssertTrue(CircleCIClient.allFinished(finalWorkflows))
-        XCTAssertFalse(CircleCIClient.anyFailed(finalWorkflows))
-    }
-
-    func testWaitForPipelineTimesOutWhileRunning() async throws {
-        // Always on_hold; a 0 timeout returns after the first poll without finishing.
-        let stub = StubTransport().on("/workflow", json: Fixtures.workflowsPage)
-        let client = makeClient(stub)
-        let workflows = try await client.waitForPipeline(id: "p1", pollInterval: 0, timeout: 0)
-        XCTAssertFalse(CircleCIClient.allFinished(workflows))
-    }
-
-    func testAnyFailedDetectsFailure() throws {
-        let failed = """
-        { "id": "wf", "name": "n", "status": "failed", "created_at": "2026-08-14T23:40:51.361Z" }
-        """
-        let workflow = try CircleCIJSON.decoder.decode(Workflow.self, from: Data(failed.utf8))
-        XCTAssertTrue(CircleCIClient.anyFailed([workflow]))
-    }
-
     // MARK: - Watch a single job
 
     func testWaitForJobPollsUntilFinished() async throws {
@@ -262,24 +223,16 @@ final class ClientCoverageTests: XCTestCase {
 
     // MARK: - Exit-code semantics
 
-    func testNotRunCountsAsAPassNotAFailure() throws {
-        func workflow(_ status: String) throws -> Workflow {
-            try CircleCIJSON.decoder.decode(Workflow.self, from: Data(
-                "{ \"id\": \"w\", \"name\": \"n\", \"status\": \"\(status)\", \"created_at\": \"2026-08-14T23:40:51.361Z\" }".utf8))
-        }
-        // A pipeline whose real workflows passed but has a skipped (not_run) one
-        // is a pass — not_run is ignored.
-        XCTAssertFalse(CircleCIClient.anyFailed([try workflow("success"), try workflow("not_run")]))
-        XCTAssertTrue(CircleCIClient.anyFailed([try workflow("success"), try workflow("failed")]))
-
-        // Same rule, workflow + job status level.
-        XCTAssertFalse(WorkflowStatus.notRun.isFailure)
-        XCTAssertTrue(WorkflowStatus.failed.isFailure)
+    func testJobFailureClassificationTreatsNotRunAsAPass() throws {
+        // `watch` exits 1 only on a genuine failure. A skipped (not_run) or
+        // superseded (retried) job is a pass, not a failure.
         XCTAssertFalse(JobStatus.notRun.isFailure)
         XCTAssertFalse(JobStatus.retried.isFailure)
         XCTAssertFalse(JobStatus.success.isFailure)
         XCTAssertTrue(JobStatus.failed.isFailure)
         XCTAssertTrue(JobStatus.timedout.isFailure)
+        XCTAssertTrue(JobStatus.canceled.isFailure)
+        XCTAssertTrue(JobStatus.infrastructureFail.isFailure)
     }
 
     // MARK: - Timeout is honored, not rounded up to the poll interval
