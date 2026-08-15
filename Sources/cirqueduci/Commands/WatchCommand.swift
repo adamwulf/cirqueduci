@@ -10,7 +10,7 @@ import CircleCIKit
 struct WatchCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "watch",
-        abstract: "Watch a single build job until it finishes, printing status each poll and its artifacts at the end."
+        abstract: "Watch a single build job until it finishes, printing status each poll and surfacing its artifacts at the end."
     )
 
     // Same locator (job number + --project) as job/steps/logs/artifacts/tests.
