@@ -13,11 +13,8 @@ struct WatchCommand: AsyncParsableCommand {
         abstract: "Watch a single build job until it finishes, printing status each poll."
     )
 
-    @Argument(help: "The build job number (from a workflow's job listing).")
-    var jobNumber: Int
-
-    @Argument(help: "Project slug, e.g. gh/museapphq/Muse.")
-    var project: String
+    // Same locator (job number + --project) as job/steps/logs/artifacts/tests.
+    @OptionGroup var locator: JobLocatorOptions
 
     @Option(name: [.short, .long], help: "Seconds between polls.")
     var interval: Double = 60
@@ -39,8 +36,8 @@ struct WatchCommand: AsyncParsableCommand {
 
     func run() async throws {
         let job = try await CircleCIClient.shared.waitForJob(
-            projectSlug: project,
-            jobNumber: jobNumber,
+            projectSlug: locator.project,
+            jobNumber: locator.jobNumber,
             pollInterval: interval,
             timeout: timeout
         ) { job in

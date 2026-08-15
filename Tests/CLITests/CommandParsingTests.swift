@@ -113,9 +113,9 @@ final class CommandParsingTests: XCTestCase {
     // MARK: - watch defaults
 
     func testWatchDefaults() throws {
-        let command = try WatchCommand.parse(["89693", "gh/museapphq/Muse"])
-        XCTAssertEqual(command.jobNumber, 89693)
-        XCTAssertEqual(command.project, "gh/museapphq/Muse")
+        let command = try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.locator.jobNumber, 89693)
+        XCTAssertEqual(command.locator.project, "gh/museapphq/Muse")
         XCTAssertEqual(command.interval, 60)
         XCTAssertEqual(command.timeout, 1800)
     }
@@ -127,21 +127,21 @@ final class CommandParsingTests: XCTestCase {
 
     func testWatchRejectsNonIntegerJobNumber() {
         // A pipeline UUID (or any non-integer) is no longer accepted — watch is job-only.
-        XCTAssertThrowsError(try WatchCommand.parse(["5b106d01-e67c-46c5-97b5-6d2a2b73479c", "gh/museapphq/Muse"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["5b106d01-e67c-46c5-97b5-6d2a2b73479c", "--project", "gh/museapphq/Muse"]))
     }
 
     func testWatchRejectsNonPositiveInterval() {
-        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "0"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "0"]))
     }
 
     func testWatchRejectsNegativeTimeout() {
-        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--timeout=-5"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout=-5"]))
     }
 
     func testWatchRejectsNonFiniteIntervalAndTimeout() {
-        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "nan"]))
-        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--interval", "inf"]))
-        XCTAssertThrowsError(try WatchCommand.parse(["89693", "gh/museapphq/Muse", "--timeout", "nan"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "nan"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--interval", "inf"]))
+        XCTAssertThrowsError(try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse", "--timeout", "nan"]))
     }
 
     // MARK: - recent defaults

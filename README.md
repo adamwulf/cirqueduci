@@ -91,7 +91,7 @@ cirqueduci cancel <workflow-id>
 cirqueduci rerun <workflow-id>
 
 # Watch a single build job until it finishes (polls; prints a status line each interval)
-cirqueduci watch 40796 gh/museapphq/Muse                # <job-number> <project-slug>
+cirqueduci watch 40796 --project gh/museapphq/Muse
 # Exit codes: 0 = success (not_run/retried also pass), 1 = failed, 2 = timed out. Default interval 60s.
 ```
 
@@ -103,7 +103,7 @@ PIPELINE=$(cirqueduci trigger --project gh/museapphq/Muse --branch main --format
 WORKFLOW=$(cirqueduci workflows "$PIPELINE" --format id | head -1)
 cirqueduci approve "$WORKFLOW" --job approve-mac-release
 cirqueduci jobs "$WORKFLOW"                              # read the mac-release JOB_NUMBER
-cirqueduci watch 40796 gh/museapphq/Muse                # wait until that one build finishes
+cirqueduci watch 40796 --project gh/museapphq/Muse      # wait until that one build finishes
 cirqueduci logs 40796 --project gh/museapphq/Muse
 ```
 
