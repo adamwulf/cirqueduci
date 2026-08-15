@@ -67,8 +67,8 @@ struct WatchCommand: AsyncParsableCommand {
         if !CircleCIClient.allFinished(workflows) {
             throw ExitCode(2) // timed out before completion
         }
-        if !CircleCIClient.allSucceeded(workflows) {
-            throw ExitCode(1) // finished, but not every workflow succeeded
+        if CircleCIClient.anyFailed(workflows) {
+            throw ExitCode(1) // finished, but at least one workflow genuinely failed
         }
     }
 
@@ -93,8 +93,8 @@ struct WatchCommand: AsyncParsableCommand {
         if !job.status.isFinished {
             throw ExitCode(2) // timed out before completion
         }
-        if job.status != .success {
-            throw ExitCode(1) // finished, but not successfully
+        if job.status.isFailure {
+            throw ExitCode(1) // finished in a genuine failure (not_run/retried pass)
         }
     }
 

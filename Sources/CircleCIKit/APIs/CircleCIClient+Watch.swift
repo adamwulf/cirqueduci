@@ -15,19 +15,10 @@ extension CircleCIClient {
         !workflows.isEmpty && workflows.allSatisfy { $0.status.isFinished }
     }
 
-    /// The workflow statuses that count as an unsuccessful outcome.
-    private static let failureStatuses: Set<WorkflowStatus> = [.failed, .error, .canceled, .unauthorized]
-
-    /// True when any workflow ended in an unsuccessful status.
+    /// True when any workflow ended in a genuine failure. A `not_run` workflow
+    /// is ignored (skipped, not failed), so it does not make the pipeline fail.
     public static func anyFailed(_ workflows: [Workflow]) -> Bool {
-        workflows.contains { failureStatuses.contains($0.status) }
-    }
-
-    /// True only when every workflow succeeded. This is the exit-0 condition:
-    /// anything else terminal (including `not_run`) is not a success, matching
-    /// the single-job rule (`status == .success`).
-    public static func allSucceeded(_ workflows: [Workflow]) -> Bool {
-        !workflows.isEmpty && workflows.allSatisfy { $0.status == .success }
+        workflows.contains { $0.status.isFailure }
     }
 
     /// Sleeps `seconds`, but never a non-positive amount (which would trap the

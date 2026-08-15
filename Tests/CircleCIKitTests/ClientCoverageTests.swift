@@ -235,17 +235,24 @@ final class ClientCoverageTests: XCTestCase {
 
     // MARK: - Exit-code semantics
 
-    func testAllSucceededRequiresEverySuccessIncludingNotRun() throws {
+    func testNotRunCountsAsAPassNotAFailure() throws {
         func workflow(_ status: String) throws -> Workflow {
             try CircleCIJSON.decoder.decode(Workflow.self, from: Data(
                 "{ \"id\": \"w\", \"name\": \"n\", \"status\": \"\(status)\", \"created_at\": \"2026-08-14T23:40:51.361Z\" }".utf8))
         }
-        XCTAssertTrue(CircleCIClient.allSucceeded([try workflow("success"), try workflow("success")]))
-        // not_run is terminal but not a success — the pipeline did not fully pass.
-        XCTAssertFalse(CircleCIClient.allSucceeded([try workflow("success"), try workflow("not_run")]))
-        XCTAssertFalse(CircleCIClient.allSucceeded([]))
-        // not_run is likewise not counted as a hard failure.
-        XCTAssertFalse(CircleCIClient.anyFailed([try workflow("not_run")]))
+        // A pipeline whose real workflows passed but has a skipped (not_run) one
+        // is a pass — not_run is ignored.
+        XCTAssertFalse(CircleCIClient.anyFailed([try workflow("success"), try workflow("not_run")]))
+        XCTAssertTrue(CircleCIClient.anyFailed([try workflow("success"), try workflow("failed")]))
+
+        // Same rule, workflow + job status level.
+        XCTAssertFalse(WorkflowStatus.notRun.isFailure)
+        XCTAssertTrue(WorkflowStatus.failed.isFailure)
+        XCTAssertFalse(JobStatus.notRun.isFailure)
+        XCTAssertFalse(JobStatus.retried.isFailure)
+        XCTAssertFalse(JobStatus.success.isFailure)
+        XCTAssertTrue(JobStatus.failed.isFailure)
+        XCTAssertTrue(JobStatus.timedout.isFailure)
     }
 
     // MARK: - Timeout is honored, not rounded up to the poll interval

@@ -71,6 +71,13 @@ public struct WorkflowStatus: StringWrapped {
 
     /// True while the workflow is still progressing or waiting for approval.
     public var isRunning: Bool { !isFinished }
+
+    /// The statuses that count as a genuine failure. `not_run` is deliberately
+    /// excluded: a skipped workflow is ignored, not a failure.
+    private static let failures: Set<WorkflowStatus> = [.failed, .error, .canceled, .unauthorized]
+
+    /// True when the workflow ended in a genuine failure (so `watch` exits 1).
+    public var isFailure: Bool { Self.failures.contains(self) }
 }
 
 /// Job `.status`.
@@ -100,6 +107,16 @@ public struct JobStatus: StringWrapped {
 
     /// True once the job has stopped running (terminal status).
     public var isFinished: Bool { Self.finished.contains(self) }
+
+    /// The statuses that count as a genuine failure. `not_run` and `retried`
+    /// are deliberately excluded: a skipped or superseded job is ignored, not
+    /// a failure.
+    private static let failures: Set<JobStatus> = [
+        .failed, .infrastructureFail, .timedout, .terminatedUnknown, .canceled, .unauthorized
+    ]
+
+    /// True when the job ended in a genuine failure (so `watch` exits 1).
+    public var isFailure: Bool { Self.failures.contains(self) }
 }
 
 /// Job `.type` — distinguishes a normal build job from a manual-approval gate.
