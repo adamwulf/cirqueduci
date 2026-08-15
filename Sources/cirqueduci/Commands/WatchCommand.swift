@@ -22,7 +22,7 @@ struct WatchCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Give up after this many seconds.")
     var timeout: Double = 1800
 
-    @Option(name: [.short, .long], help: "Output format for the final snapshot and its artifacts.")
+    @Option(name: [.short, .long], help: "Output format for the final snapshot (and, for table/jsonl, its artifacts).")
     var format: OutputFormat = .table
 
     // Generous upper bound (365 days) that keeps the poll sleeps well within the
@@ -68,25 +68,43 @@ struct WatchCommand: AsyncParsableCommand {
         }
     }
 
-    /// Lists the finished job's artifacts to stdout in the chosen `--format`.
-    /// This is supplementary to the exit-code contract callers depend on, so a
+    /// Surfaces the finished job's artifacts after the snapshot. The listing is
+    /// supplementary to the exit-code contract callers depend on, so a
     /// fetch/encode failure is reported on stderr and never changes the exit
     /// status — a successful job must still exit 0 even if its artifacts cannot
     /// be listed.
+    ///
+    /// Where they go depends on whether the chosen format can carry an appended,
+    /// heterogeneous list without corrupting stdout:
+    /// - `table` (a labeled section) and `jsonl` (self-describing object lines)
+    ///   can, so the artifacts join the snapshot on stdout.
+    /// - `json` (a second top-level array would make stdout invalid JSON) and
+    ///   `id` (bare lines are indistinguishable from the job's) cannot, so
+    ///   stdout stays a clean snapshot and a one-line pointer to the `artifacts`
+    ///   command is written to stderr instead.
     private func listArtifacts() async {
         do {
             let artifacts = try await CircleCIClient.shared.artifacts(
                 projectSlug: locator.project,
                 jobNumber: locator.jobNumber
             )
-            // A labeled section only makes sense for the human-readable table;
-            // json/jsonl/id stay machine-parseable, and an empty listing is
-            // simply omitted so those streams are not cluttered.
-            if format == .table {
+            switch format {
+            case .table:
                 print(artifacts.isEmpty ? "\nNo artifacts." : "\nArtifacts:")
-            }
-            if !artifacts.isEmpty {
-                try Cirqueduci.emit(artifacts, format: format)
+                if !artifacts.isEmpty {
+                    try Cirqueduci.emit(artifacts, format: .table)
+                }
+            case .jsonl:
+                // One JSON object per line stays valid appended to the snapshot
+                // line; an empty listing simply adds nothing.
+                if !artifacts.isEmpty {
+                    try Cirqueduci.emit(artifacts, format: .jsonl)
+                }
+            case .json, .id:
+                let note = artifacts.isEmpty
+                    ? "No artifacts for job \(locator.jobNumber)."
+                    : "\(artifacts.count) artifact(s) — list them with: cirqueduci artifacts \(locator.jobNumber) --project \(locator.project) --format \(format.rawValue)"
+                FileHandle.standardError.write(Data((note + "\n").utf8))
             }
         } catch {
             FileHandle.standardError.write(Data("warning: could not list artifacts: \(error)\n".utf8))
