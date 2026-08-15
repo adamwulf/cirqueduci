@@ -106,19 +106,6 @@ enum Fixtures {
     }
     """
 
-    static let pipeline = """
-    {
-      "id": "1cfafffe-3869-47c9-8941-b972e5dea8bf",
-      "errors": [],
-      "project_slug": "gh/museapphq/Muse",
-      "number": 12345,
-      "state": "created",
-      "created_at": "2026-08-14T23:40:50.978Z",
-      "updated_at": "2026-08-14T23:40:50.978Z",
-      "vcs": { "branch": "agent/web-snapshot-selection", "revision": "af2f988dc87429afc22f7bcae107610ac82ae97e" }
-    }
-    """
-
     static let workflowsPage = """
     {
       "items": [
