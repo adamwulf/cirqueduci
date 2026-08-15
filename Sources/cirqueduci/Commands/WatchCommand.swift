@@ -28,6 +28,15 @@ struct WatchCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Output format for each poll's snapshot.")
     var format: OutputFormat = .table
 
+    func validate() throws {
+        if interval <= 0 {
+            throw ValidationError("--interval must be greater than 0.")
+        }
+        if timeout < 0 {
+            throw ValidationError("--timeout must be 0 or greater.")
+        }
+    }
+
     func run() async throws {
         // A pipeline id is a UUID; a job number is an integer. Route on shape.
         if let jobNumber = Int(target) {
@@ -58,8 +67,8 @@ struct WatchCommand: AsyncParsableCommand {
         if !CircleCIClient.allFinished(workflows) {
             throw ExitCode(2) // timed out before completion
         }
-        if CircleCIClient.anyFailed(workflows) {
-            throw ExitCode(1) // finished, but at least one workflow was unsuccessful
+        if !CircleCIClient.allSucceeded(workflows) {
+            throw ExitCode(1) // finished, but not every workflow succeeded
         }
     }
 

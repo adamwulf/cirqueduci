@@ -23,6 +23,21 @@ extension CircleCIClient {
         workflows.contains { failureStatuses.contains($0.status) }
     }
 
+    /// True only when every workflow succeeded. This is the exit-0 condition:
+    /// anything else terminal (including `not_run`) is not a success, matching
+    /// the single-job rule (`status == .success`).
+    public static func allSucceeded(_ workflows: [Workflow]) -> Bool {
+        !workflows.isEmpty && workflows.allSatisfy { $0.status == .success }
+    }
+
+    /// Sleeps `seconds`, but never a non-positive amount (which would trap the
+    /// `UInt64` conversion and, at 0, busy-spin). Callers pass the time left
+    /// until the deadline so a poll never overshoots the caller's timeout.
+    private static func nap(_ seconds: TimeInterval) async throws {
+        guard seconds > 0 else { return }
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
     /// Polls a pipeline's workflows until they all finish (or `timeout`
     /// elapses). `onPoll` is called with the current workflows after each fetch.
     /// Returns the final workflow list.
@@ -39,10 +54,11 @@ extension CircleCIClient {
             if Self.allFinished(workflows) {
                 return workflows
             }
-            if Date() >= deadline {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 {
                 return workflows
             }
-            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+            try await Self.nap(min(pollInterval, remaining))
         }
     }
 
@@ -63,10 +79,11 @@ extension CircleCIClient {
             if job.status.isFinished {
                 return job
             }
-            if Date() >= deadline {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 {
                 return job
             }
-            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+            try await Self.nap(min(pollInterval, remaining))
         }
     }
 }

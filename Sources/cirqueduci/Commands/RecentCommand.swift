@@ -29,6 +29,15 @@ struct RecentCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Output format.")
     var format: OutputFormat = .table
 
+    func validate() throws {
+        if hours <= 0 {
+            throw ValidationError("--hours must be greater than 0.")
+        }
+        if limit < 1 {
+            throw ValidationError("--limit must be at least 1.")
+        }
+    }
+
     func run() async throws {
         let since = Date().addingTimeInterval(-hours * 3600)
         var activity = try await CircleCIClient.shared.recentActivity(

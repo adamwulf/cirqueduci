@@ -126,6 +126,14 @@ final class CommandParsingTests: XCTestCase {
         XCTAssertEqual(command.project, "gh/museapphq/Muse")
     }
 
+    func testWatchRejectsNonPositiveInterval() {
+        XCTAssertThrowsError(try WatchCommand.parse(["x", "--interval", "0"]))
+    }
+
+    func testWatchRejectsNegativeTimeout() {
+        XCTAssertThrowsError(try WatchCommand.parse(["x", "--timeout=-5"]))
+    }
+
     // MARK: - recent defaults
 
     func testRecentDefaults() throws {
@@ -138,6 +146,14 @@ final class CommandParsingTests: XCTestCase {
 
     func testRecentRequiresProject() {
         XCTAssertThrowsError(try RecentCommand.parse([]))
+    }
+
+    func testRecentRejectsNonPositiveHours() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--hours", "0"]))
+    }
+
+    func testRecentRejectsZeroLimit() {
+        XCTAssertThrowsError(try RecentCommand.parse(["--project", "p", "--limit", "0"]))
     }
 
     // MARK: - root

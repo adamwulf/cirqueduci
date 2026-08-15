@@ -176,6 +176,93 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertFalse(activity.first?.isActive ?? true)
     }
 
+    func testRecentActivityFollowsNextPageTokenAndStopsAtWindow() async throws {
+        let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
+        let page1 = """
+        { "items": [
+            { "id": "pA", "number": 3, "errors": [], "state": "created", "updated_at": "2026-08-14T20:00:00.000Z" }
+          ], "next_page_token": "tok" }
+        """
+        let page2 = """
+        { "items": [
+            { "id": "pB", "number": 2, "errors": [], "state": "created", "updated_at": "2026-08-14T10:00:00.000Z" },
+            { "id": "pC", "number": 1, "errors": [], "state": "created", "updated_at": "2026-08-10T00:00:00.000Z" }
+          ], "next_page_token": null }
+        """
+        let emptyWorkflows = "{ \"items\": [], \"next_page_token\": null }"
+        let stub = StubTransport()
+            .on("/workflow", json: emptyWorkflows)
+            .on(where: { $0.url.absoluteString.contains("/pipeline") && !$0.url.absoluteString.contains("/workflow") }) { request in
+                request.url.absoluteString.contains("page-token") ? StubReply(json: page2) : StubReply(json: page1)
+            }
+        let client = makeClient(stub)
+
+        let activity = try await client.recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
+        XCTAssertEqual(activity.map { $0.pipeline.id }, ["pA", "pB"], "spans pages, stops at the out-of-window pipeline")
+        let listRequests = stub.requests.filter {
+            $0.url.absoluteString.contains("/pipeline") && !$0.url.absoluteString.contains("/workflow")
+        }
+        XCTAssertEqual(listRequests.count, 2, "must follow next_page_token to the second page")
+        XCTAssertFalse(stub.requests.contains { $0.url.absoluteString.contains("pC") },
+                       "must not fetch workflows for a pipeline outside the window")
+    }
+
+    func testRecentActivityIncludesBoundaryAndRespectsCap() async throws {
+        let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
+        let page = """
+        { "items": [
+            { "id": "pA", "number": 3, "errors": [], "state": "created", "updated_at": "2026-08-14T20:00:00.000Z" },
+            { "id": "pBoundary", "number": 2, "errors": [], "state": "created", "updated_at": "2026-08-14T00:00:00.000Z" },
+            { "id": "pOld", "number": 1, "errors": [], "state": "created", "updated_at": "2026-08-13T23:59:59.000Z" }
+          ], "next_page_token": null }
+        """
+        let emptyWorkflows = "{ \"items\": [], \"next_page_token\": null }"
+        func makeStub() -> StubTransport {
+            StubTransport()
+                .on("/workflow", json: emptyWorkflows)
+                .on(where: { $0.url.absoluteString.contains("/pipeline") && !$0.url.absoluteString.contains("/workflow") }) { _ in StubReply(json: page) }
+        }
+
+        // Inclusive lower bound: the pipeline exactly at `since` is kept; the one
+        // a second earlier is dropped and stops the scan.
+        let all = try await makeClient(makeStub()).recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
+        XCTAssertEqual(all.map { $0.pipeline.id }, ["pA", "pBoundary"])
+
+        // Cap: never return more than maxPipelines.
+        let capped = try await makeClient(makeStub()).recentActivity(projectSlug: "gh/museapphq/Muse", since: since, maxPipelines: 1)
+        XCTAssertEqual(capped.map { $0.pipeline.id }, ["pA"])
+    }
+
+    // MARK: - Exit-code semantics
+
+    func testAllSucceededRequiresEverySuccessIncludingNotRun() throws {
+        func workflow(_ status: String) throws -> Workflow {
+            try CircleCIJSON.decoder.decode(Workflow.self, from: Data(
+                "{ \"id\": \"w\", \"name\": \"n\", \"status\": \"\(status)\", \"created_at\": \"2026-08-14T23:40:51.361Z\" }".utf8))
+        }
+        XCTAssertTrue(CircleCIClient.allSucceeded([try workflow("success"), try workflow("success")]))
+        // not_run is terminal but not a success — the pipeline did not fully pass.
+        XCTAssertFalse(CircleCIClient.allSucceeded([try workflow("success"), try workflow("not_run")]))
+        XCTAssertFalse(CircleCIClient.allSucceeded([]))
+        // not_run is likewise not counted as a hard failure.
+        XCTAssertFalse(CircleCIClient.anyFailed([try workflow("not_run")]))
+    }
+
+    // MARK: - Timeout is honored, not rounded up to the poll interval
+
+    func testWaitForJobReturnsByDeadlineNotFullInterval() async throws {
+        let running = "{ \"number\": 1, \"name\": \"j\", \"status\": \"running\" }"
+        let stub = StubTransport().on("/job/", json: running)
+        let client = makeClient(stub)
+
+        let start = Date()
+        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 1,
+                                              pollInterval: 10, timeout: 0.2)
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertFalse(job.status.isFinished)
+        XCTAssertLessThan(elapsed, 3, "must return near the 0.2s timeout, not sleep the 10s interval")
+    }
+
     // MARK: - Artifact download + traversal guard
 
     func testDownloadArtifactsWritesFiles() async throws {
