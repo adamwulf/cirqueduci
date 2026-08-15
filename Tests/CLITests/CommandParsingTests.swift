@@ -114,16 +114,37 @@ final class CommandParsingTests: XCTestCase {
 
     func testWatchDefaults() throws {
         let command = try WatchCommand.parse(["pipeline-id"])
-        XCTAssertEqual(command.pipelineId, "pipeline-id")
-        XCTAssertEqual(command.interval, 5)
+        XCTAssertEqual(command.target, "pipeline-id")
+        XCTAssertNil(command.project)
+        XCTAssertEqual(command.interval, 60)
         XCTAssertEqual(command.timeout, 1800)
+    }
+
+    func testWatchAcceptsJobNumberWithProject() throws {
+        let command = try WatchCommand.parse(["89693", "--project", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.target, "89693")
+        XCTAssertEqual(command.project, "gh/museapphq/Muse")
+    }
+
+    // MARK: - recent defaults
+
+    func testRecentDefaults() throws {
+        let command = try RecentCommand.parse(["--project", "gh/museapphq/Muse"])
+        XCTAssertEqual(command.project, "gh/museapphq/Muse")
+        XCTAssertEqual(command.hours, 24)
+        XCTAssertFalse(command.running)
+        XCTAssertEqual(command.limit, 50)
+    }
+
+    func testRecentRequiresProject() {
+        XCTAssertThrowsError(try RecentCommand.parse([]))
     }
 
     // MARK: - root
 
     func testRootHasAllSubcommands() {
         let names = Cirqueduci.configuration.subcommands.map { $0.configuration.commandName }
-        for expected in ["me", "projects", "pipelines", "workflows", "jobs", "job", "steps",
+        for expected in ["me", "projects", "pipelines", "recent", "workflows", "jobs", "job", "steps",
                          "logs", "artifacts", "tests", "trigger", "approve", "cancel", "rerun", "watch"] {
             XCTAssertTrue(names.contains(expected), "missing subcommand: \(expected)")
         }

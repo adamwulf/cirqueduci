@@ -57,6 +57,10 @@ cirqueduci pipelines --project gh/museapphq/Muse --branch main --limit 10
 cirqueduci pipelines --org gh/museapphq --mine
 cirqueduci pipelines <pipeline-id>
 
+# See everything with activity in a recent window, with each pipeline's workflow rollup
+cirqueduci recent --project gh/museapphq/Muse                       # last 24h (default)
+cirqueduci recent --project gh/museapphq/Muse --hours 6 --running   # only what's still in progress
+
 # Drill down: pipeline -> workflows -> jobs
 cirqueduci workflows <pipeline-id>
 cirqueduci jobs <workflow-id>
@@ -86,8 +90,10 @@ cirqueduci approve <workflow-id> --approval-request-id <id>
 cirqueduci cancel <workflow-id>
 cirqueduci rerun <workflow-id>
 
-# Watch a pipeline until every workflow finishes (polls; exit code reflects result)
-cirqueduci watch <pipeline-id> --interval 10
+# Watch until finished (polls; prints status each interval; exit code reflects result)
+cirqueduci watch <pipeline-id>                          # a whole pipeline's workflows
+cirqueduci watch 40796 --project gh/museapphq/Muse      # a single build job, by its number
+# Exit codes: 0 = success, 1 = finished but unsuccessful, 2 = timed out. Default interval 60s.
 ```
 
 ### End-to-end (agent) flow

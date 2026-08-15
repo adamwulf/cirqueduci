@@ -49,6 +49,21 @@ extension Pipeline: CircleCIRow {
     public var idValue: String { id }
 }
 
+extension PipelineActivity: CircleCIRow {
+    public static var tableColumns: [String] { ["NUMBER", "UPDATED", "BRANCH/TAG", "WORKFLOWS", "ID"] }
+    public var tableValues: [String] {
+        [
+            pipeline.number.map(String.init) ?? "-",
+            short(pipeline.updatedAt ?? pipeline.createdAt),
+            nonEmpty(pipeline.vcs?.branch ?? pipeline.vcs?.tag),
+            workflowSummary,
+            pipeline.id
+        ]
+    }
+    // The pipeline UUID is a valid input to `workflows`/`watch`, so it stays the id.
+    public var idValue: String { pipeline.id }
+}
+
 extension Workflow: CircleCIRow {
     public static var tableColumns: [String] { ["NAME", "STATUS", "CREATED", "ID"] }
     public var tableValues: [String] {
@@ -58,11 +73,15 @@ extension Workflow: CircleCIRow {
 }
 
 extension Job: CircleCIRow {
-    public static var tableColumns: [String] { ["NAME", "TYPE", "STATUS", "JOB_NUMBER", "ID"] }
+    // A job is identified by its per-project integer `job_number`, which every
+    // build-level command (`job`, `steps`, `logs`, `watch`, …) consumes. The
+    // opaque `id` UUID is not accepted as input anywhere, so it is not shown;
+    // it survives on the model only as the approval-request fallback.
+    public static var tableColumns: [String] { ["NAME", "TYPE", "STATUS", "JOB_NUMBER"] }
     public var tableValues: [String] {
-        [name, type.rawValue, status.rawValue, jobNumber.map(String.init) ?? "-", id]
+        [name, type.rawValue, status.rawValue, jobNumber.map(String.init) ?? "-"]
     }
-    public var idValue: String { id }
+    public var idValue: String { jobNumber.map(String.init) ?? "-" }
 }
 
 extension JobDetail: CircleCIRow {

@@ -80,6 +80,102 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertTrue(CircleCIClient.anyFailed([workflow]))
     }
 
+    // MARK: - Watch a single job
+
+    func testWaitForJobPollsUntilFinished() async throws {
+        let running = """
+        { "number": 89693, "name": "mac-release", "status": "running",
+          "started_at": "2026-08-14T20:31:00.000Z" }
+        """
+        let success = """
+        { "number": 89693, "name": "mac-release", "status": "success",
+          "started_at": "2026-08-14T20:31:00.000Z", "stopped_at": "2026-08-14T20:40:00.000Z", "duration": 540000 }
+        """
+        let stub = StubTransport().onSequence("/job/", replies: [
+            StubReply(json: running),
+            StubReply(json: success)
+        ])
+        let client = makeClient(stub)
+
+        var pollCount = 0
+        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
+                                              pollInterval: 0, timeout: 5) { _ in pollCount += 1 }
+        XCTAssertEqual(pollCount, 2)
+        XCTAssertEqual(job.status, .success)
+        XCTAssertTrue(job.status.isFinished)
+    }
+
+    func testWaitForJobTimesOutWhileRunning() async throws {
+        let running = """
+        { "number": 89693, "name": "mac-release", "status": "running" }
+        """
+        let stub = StubTransport().on("/job/", json: running)
+        let client = makeClient(stub)
+        let job = try await client.waitForJob(projectSlug: "gh/museapphq/Muse", jobNumber: 89693,
+                                              pollInterval: 0, timeout: 0)
+        XCTAssertFalse(job.status.isFinished, "a still-running job must not be reported finished")
+    }
+
+    // MARK: - Recent activity overview
+
+    func testRecentActivityStopsAtWindowAndAttachesWorkflows() async throws {
+        let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
+        let pipelinesJSON = """
+        { "items": [
+            { "id": "p-new", "number": 20483, "errors": [], "state": "created",
+              "created_at": "2026-08-14T20:00:00.000Z", "updated_at": "2026-08-14T20:05:00.000Z",
+              "vcs": { "branch": "agent/web-snapshot-selection" } },
+            { "id": "p-old", "number": 20000, "errors": [], "state": "created",
+              "created_at": "2026-08-10T00:00:00.000Z", "updated_at": "2026-08-10T00:00:00.000Z" }
+          ], "next_page_token": null }
+        """
+        let workflowsJSON = """
+        { "items": [
+            { "id": "wf-1", "name": "release-deploy", "status": "running", "pipeline_id": "p-new",
+              "created_at": "2026-08-14T20:01:00.000Z" },
+            { "id": "wf-2", "name": "alpha-deploy", "status": "on_hold", "pipeline_id": "p-new",
+              "created_at": "2026-08-14T20:01:00.000Z" }
+          ], "next_page_token": null }
+        """
+        // Register the more-specific "/workflow" matcher first; the pipelines-list
+        // URL contains "/pipeline" but not "/workflow", so each routes correctly.
+        let stub = StubTransport()
+            .on("/workflow", json: workflowsJSON)
+            .on("/pipeline", json: pipelinesJSON)
+        let client = makeClient(stub)
+
+        let activity = try await client.recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
+        XCTAssertEqual(activity.count, 1, "the pipeline older than `since` must be excluded")
+        let first = try XCTUnwrap(activity.first)
+        XCTAssertEqual(first.pipeline.id, "p-new")
+        XCTAssertEqual(first.workflows.count, 2)
+        XCTAssertTrue(first.isActive)
+        XCTAssertEqual(first.workflowSummary, "1 running, 1 on_hold")
+        XCTAssertFalse(stub.requests.contains { $0.url.absoluteString.contains("p-old") },
+                       "must not fetch workflows for a pipeline outside the window")
+    }
+
+    func testRecentActivityMarksPipelinesWithNoWorkflows() async throws {
+        let since = try XCTUnwrap(CircleCIDate.parse("2026-08-14T00:00:00.000Z"))
+        let pipelinesJSON = """
+        { "items": [
+            { "id": "p-tag", "number": 20482, "errors": [], "state": "created",
+              "created_at": "2026-08-14T20:00:00.000Z", "updated_at": "2026-08-14T20:00:00.000Z",
+              "vcs": { "tag": "builds/macrelease/10876" } }
+          ], "next_page_token": null }
+        """
+        let emptyWorkflows = "{ \"items\": [], \"next_page_token\": null }"
+        let stub = StubTransport()
+            .on("/workflow", json: emptyWorkflows)
+            .on("/pipeline", json: pipelinesJSON)
+        let client = makeClient(stub)
+
+        let activity = try await client.recentActivity(projectSlug: "gh/museapphq/Muse", since: since)
+        XCTAssertEqual(activity.count, 1)
+        XCTAssertEqual(activity.first?.workflowSummary, "no workflows")
+        XCTAssertFalse(activity.first?.isActive ?? true)
+    }
+
     // MARK: - Artifact download + traversal guard
 
     func testDownloadArtifactsWritesFiles() async throws {

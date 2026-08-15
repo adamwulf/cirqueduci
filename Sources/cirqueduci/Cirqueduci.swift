@@ -24,6 +24,7 @@ struct Cirqueduci: AsyncParsableCommand {
             MeCommand.self,
             ProjectsCommand.self,
             PipelinesCommand.self,
+            RecentCommand.self,
             WorkflowsCommand.self,
             JobsCommand.self,
             JobCommand.self,

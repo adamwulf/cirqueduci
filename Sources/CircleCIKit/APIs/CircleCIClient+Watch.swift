@@ -45,4 +45,28 @@ extension CircleCIClient {
             try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
         }
     }
+
+    /// Polls one build job (by project + number) until it reaches a terminal
+    /// status (or `timeout` elapses). `onPoll` is called with the current job
+    /// detail after each fetch. Returns the final job detail.
+    @discardableResult
+    public func waitForJob(projectSlug: String,
+                           jobNumber: Int,
+                           pollInterval: TimeInterval = 60,
+                           timeout: TimeInterval = 1800,
+                           onPoll: ((JobDetail) -> Void)? = nil) async throws -> JobDetail {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            let job = try await self.jobDetail(projectSlug: projectSlug, jobNumber: jobNumber)
+            onPoll?(job)
+
+            if job.status.isFinished {
+                return job
+            }
+            if Date() >= deadline {
+                return job
+            }
+            try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+        }
+    }
 }
