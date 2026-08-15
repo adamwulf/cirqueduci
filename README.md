@@ -92,6 +92,8 @@ cirqueduci rerun <workflow-id>
 
 # Watch a single build job until it finishes (polls; prints a status line each interval)
 cirqueduci watch 40796 --project gh/museapphq/Muse
+# Status lines go to stderr; the final snapshot goes to stdout. Once the job
+# finishes (pass or fail) its artifacts are listed on stdout too (same --format).
 # Exit codes: 0 = success (not_run/retried also pass), 1 = failed, 2 = timed out. Default interval 60s.
 ```
 

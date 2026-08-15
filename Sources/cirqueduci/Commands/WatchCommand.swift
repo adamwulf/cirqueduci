@@ -10,7 +10,7 @@ import CircleCIKit
 struct WatchCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "watch",
-        abstract: "Watch a single build job until it finishes, printing status each poll."
+        abstract: "Watch a single build job until it finishes, printing status each poll and its artifacts at the end."
     )
 
     // Same locator (job number + --project) as job/steps/logs/artifacts/tests.
@@ -22,7 +22,7 @@ struct WatchCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Give up after this many seconds.")
     var timeout: Double = 1800
 
-    @Option(name: [.short, .long], help: "Output format for the final snapshot.")
+    @Option(name: [.short, .long], help: "Output format for the final snapshot and its artifacts.")
     var format: OutputFormat = .table
 
     // Generous upper bound (365 days) that keeps the poll sleeps well within the
@@ -50,6 +50,14 @@ struct WatchCommand: AsyncParsableCommand {
 
         // Final snapshot to stdout.
         try Cirqueduci.emit([outcome.job], format: format)
+
+        // Once the job has actually finished — whether it passed or failed —
+        // also list its artifacts, so callers see them without a second command.
+        // A timed-out job is not "finished", so it gets no listing.
+        if case .finished = outcome {
+            await listArtifacts()
+        }
+
         switch outcome {
         case .timedOut:
             throw ExitCode(2) // budget elapsed before a terminal status was observed
@@ -57,6 +65,31 @@ struct WatchCommand: AsyncParsableCommand {
             throw ExitCode(1) // finished in a genuine failure (not_run/retried pass)
         case .finished:
             break
+        }
+    }
+
+    /// Lists the finished job's artifacts to stdout in the chosen `--format`.
+    /// This is supplementary to the exit-code contract callers depend on, so a
+    /// fetch/encode failure is reported on stderr and never changes the exit
+    /// status — a successful job must still exit 0 even if its artifacts cannot
+    /// be listed.
+    private func listArtifacts() async {
+        do {
+            let artifacts = try await CircleCIClient.shared.artifacts(
+                projectSlug: locator.project,
+                jobNumber: locator.jobNumber
+            )
+            // A labeled section only makes sense for the human-readable table;
+            // json/jsonl/id stay machine-parseable, and an empty listing is
+            // simply omitted so those streams are not cluttered.
+            if format == .table {
+                print(artifacts.isEmpty ? "\nNo artifacts." : "\nArtifacts:")
+            }
+            if !artifacts.isEmpty {
+                try Cirqueduci.emit(artifacts, format: format)
+            }
+        } catch {
+            FileHandle.standardError.write(Data("warning: could not list artifacts: \(error)\n".utf8))
         }
     }
 
