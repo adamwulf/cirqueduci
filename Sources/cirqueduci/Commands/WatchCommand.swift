@@ -103,7 +103,7 @@ struct WatchCommand: AsyncParsableCommand {
             case .json, .id:
                 let note = artifacts.isEmpty
                     ? "No artifacts for job \(locator.jobNumber)."
-                    : "\(artifacts.count) artifact(s) — list them with: cirqueduci artifacts \(locator.jobNumber) --project \(locator.project) --format \(format.rawValue)"
+                    : "\(artifacts.count) artifact(s) — download them with: cirqueduci artifacts \(locator.jobNumber) --project \(locator.project) --download <dir>"
                 FileHandle.standardError.write(Data((note + "\n").utf8))
             }
         } catch {

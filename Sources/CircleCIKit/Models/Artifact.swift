@@ -17,6 +17,15 @@ public struct Artifact: Codable {
         case nodeIndex = "node_index"
         case url
     }
+
+    /// Encodes without `url`. The artifact URL needs a login session, so it is
+    /// not usable on its own. Output must not offer it; callers fetch the
+    /// bytes with `downloadArtifacts` (`--download`) instead.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encodeIfPresent(nodeIndex, forKey: .nodeIndex)
+    }
 }
 
 public struct TestResult: Codable {

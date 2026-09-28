@@ -73,6 +73,8 @@ cirqueduci logs 40796 --project gh/museapphq/Muse
 cirqueduci logs 40796 --project gh/museapphq/Muse --step "Spin up environment" --raw
 
 # Artifacts and test metadata
+# Listings show the path and node only. Artifact URLs need a login session, so
+# they are never printed; use --download to get the files.
 cirqueduci artifacts 40796 --project gh/museapphq/Muse
 cirqueduci artifacts 40796 --project gh/museapphq/Muse --download ./artifacts
 cirqueduci tests 40796 --project gh/museapphq/Muse
@@ -95,7 +97,7 @@ cirqueduci watch 40796 --project gh/museapphq/Muse
 # Status lines go to stderr; the final snapshot goes to stdout. Once the job
 # finishes (pass or fail) its artifacts are surfaced too: on stdout for the
 # table and jsonl formats, and (to keep those stdout streams valid/unambiguous)
-# as a one-line stderr pointer to `artifacts` for the json and id formats.
+# as a one-line stderr pointer to `artifacts --download` for the json and id formats.
 # Exit codes: 0 = success (not_run/retried also pass), 1 = failed, 2 = timed out. Default interval 60s.
 ```
 

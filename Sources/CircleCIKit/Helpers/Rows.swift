@@ -108,9 +108,9 @@ extension Step: CircleCIRow {
 }
 
 extension Artifact: CircleCIRow {
-    public static var tableColumns: [String] { ["PATH", "NODE", "URL"] }
+    public static var tableColumns: [String] { ["PATH", "NODE"] }
     public var tableValues: [String] {
-        [path, nodeIndex.map(String.init) ?? "-", url]
+        [path, nodeIndex.map(String.init) ?? "-"]
     }
     public var idValue: String { path }
 }
