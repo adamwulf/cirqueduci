@@ -34,7 +34,7 @@ extension CircleCIClient {
         let fileManager = FileManager.default
         var downloaded: [DownloadedArtifact] = []
 
-        let rootPath = directory.standardizedFileURL.path
+        let rootComponents = directory.pathComponents
 
         for artifact in artifacts {
             guard let url = URL(string: artifact.url) else { continue }
@@ -49,8 +49,11 @@ extension CircleCIClient {
             guard !safeComponents.isEmpty else { continue }
             let destination = directory.appendingPathComponent(safeComponents.joined(separator: "/"))
 
-            // Belt-and-suspenders: skip anything that still resolves outside root.
-            guard destination.standardizedFileURL.path.hasPrefix(rootPath) else { continue }
+            // Belt-and-suspenders: skip anything not inside root. Compare path
+            // components, not standardizedFileURL paths: standardizing drops a
+            // leading "/private" only when that path exists on disk, so an
+            // existing root and a new file under it would not share a prefix.
+            guard destination.pathComponents.starts(with: rootComponents) else { continue }
 
             let data = try await downloadData(from: url)
             try fileManager.createDirectory(at: destination.deletingLastPathComponent(),

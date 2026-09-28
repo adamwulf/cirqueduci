@@ -382,6 +382,27 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: "/etc/evil.txt"))
     }
 
+    func testDownloadArtifactsIntoExistingPrivateDirectory() async throws {
+        // Foundation's standardizedFileURL drops a leading "/private" only when
+        // the shorter path exists on disk. Here the directory exists (as after an
+        // earlier download) but the new files do not, so the two paths used to
+        // standardize differently and every new artifact was skipped.
+        let tempDir = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("artifacts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let stub = StubTransport()
+            .on("/artifacts", json: Fixtures.artifactsPage)
+            .on("output.circle-artifacts.com", json: "BINARY-CONTENT")
+        let client = makeClient(stub)
+
+        let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse",
+                                                            jobNumber: 40796, to: tempDir)
+        XCTAssertEqual(downloaded.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("test-results/results.xml").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("build/app.zip").path))
+    }
+
     // MARK: - Remaining endpoints through the client
 
     func testFollowedProjectsThroughClient() async throws {
