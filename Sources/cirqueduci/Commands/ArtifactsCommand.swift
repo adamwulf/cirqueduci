@@ -18,8 +18,17 @@ struct ArtifactsCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Download all artifacts into this directory (preserving their paths).")
     var download: String?
 
+    @Option(name: .long, help: "With --download, only download artifacts whose path contains this text (case-sensitive). A full path selects one artifact.")
+    var match: String?
+
     @Option(name: [.short, .long], help: "Output format (listing only).")
     var format: OutputFormat = .table
+
+    func validate() throws {
+        if match != nil && download == nil {
+            throw ValidationError("--match requires --download.")
+        }
+    }
 
     func run() async throws {
         let client = CircleCIClient.shared
@@ -27,12 +36,17 @@ struct ArtifactsCommand: AsyncParsableCommand {
             let directory = URL(fileURLWithPath: (download as NSString).expandingTildeInPath)
             let results = try await client.downloadArtifacts(projectSlug: locator.project,
                                                              jobNumber: locator.jobNumber,
-                                                             to: directory)
+                                                             to: directory,
+                                                             match: match)
             for result in results {
                 print("\(result.byteCount)\t\(result.localURL.path)")
             }
             if results.isEmpty {
-                print("No artifacts found for job \(locator.jobNumber).")
+                if let match = match {
+                    print("No artifacts matching \"\(match)\" found for job \(locator.jobNumber).")
+                } else {
+                    print("No artifacts found for job \(locator.jobNumber).")
+                }
             }
         } else {
             let artifacts = try await client.artifacts(projectSlug: locator.project, jobNumber: locator.jobNumber)

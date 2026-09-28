@@ -17,13 +17,20 @@ public struct DownloadedArtifact {
 
 extension CircleCIClient {
 
-    /// Downloads all of a job's artifacts into `directory`, recreating each
+    /// Downloads a job's artifacts into `directory`, recreating each
     /// artifact's `path` under it. Creates intermediate directories as needed.
+    /// When `match` is set, only artifacts whose `path` contains it (a
+    /// case-sensitive substring) are downloaded, so a full path selects one
+    /// artifact and a shorter string selects many.
     public func downloadArtifacts(projectSlug: String,
                                   jobNumber: Int,
                                   to directory: URL,
+                                  match: String? = nil,
                                   limit: Int = .max) async throws -> [DownloadedArtifact] {
-        let artifacts = try await self.artifacts(projectSlug: projectSlug, jobNumber: jobNumber, limit: limit)
+        var artifacts = try await self.artifacts(projectSlug: projectSlug, jobNumber: jobNumber, limit: limit)
+        if let match = match, !match.isEmpty {
+            artifacts = artifacts.filter { $0.path.contains(match) }
+        }
         let fileManager = FileManager.default
         var downloaded: [DownloadedArtifact] = []
 

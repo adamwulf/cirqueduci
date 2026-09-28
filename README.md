@@ -77,6 +77,9 @@ cirqueduci logs 40796 --project gh/museapphq/Muse --step "Spin up environment" -
 # they are never printed; use --download to get the files.
 cirqueduci artifacts 40796 --project gh/museapphq/Muse
 cirqueduci artifacts 40796 --project gh/museapphq/Muse --download ./artifacts
+# --match keeps artifacts whose path contains the text (case-sensitive):
+# a full path gets one artifact, a shorter string gets many.
+cirqueduci artifacts 40796 --project gh/museapphq/Muse --download ./artifacts --match build/app.zip
 cirqueduci tests 40796 --project gh/museapphq/Muse
 
 # Trigger (start) a pipeline
