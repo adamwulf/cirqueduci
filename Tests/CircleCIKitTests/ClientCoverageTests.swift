@@ -524,6 +524,7 @@ final class ClientCoverageTests: XCTestCase {
             .on("output.circle-artifacts.com", json: "PWNED")
         let client = makeClient(stub)
         let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 1, to: tempDir)
+        XCTAssertEqual(downloaded.count, 1)
         for item in downloaded {
             XCTAssertTrue(item.localURL.standardizedFileURL.path.hasPrefix(tempDir.standardizedFileURL.path),
                           "artifact escaped: \(item.localURL.path)")
