@@ -85,6 +85,13 @@ final class CommandParsingTests: XCTestCase {
         XCTAssertThrowsError(try ArtifactsCommand.parse(["40796", "-p", "gh/museapphq/Muse", "--match", "app.zip"]))
     }
 
+    func testArtifactsSkipSummary() {
+        XCTAssertEqual(ArtifactsCommand.skipSummary(downloaded: 1, skipped: 2, match: "coverage"),
+                       "3 artifact(s) matched \"coverage\": 1 downloaded, 2 skipped.")
+        XCTAssertEqual(ArtifactsCommand.skipSummary(downloaded: 0, skipped: 1, match: nil),
+                       "1 artifact(s) found: 0 downloaded, 1 skipped.")
+    }
+
     // MARK: - approve
 
     func testApproveByName() throws {

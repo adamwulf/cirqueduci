@@ -34,23 +34,39 @@ struct ArtifactsCommand: AsyncParsableCommand {
         let client = CircleCIClient.shared
         if let download = download {
             let directory = URL(fileURLWithPath: (download as NSString).expandingTildeInPath)
-            let results = try await client.downloadArtifacts(projectSlug: locator.project,
-                                                             jobNumber: locator.jobNumber,
-                                                             to: directory,
-                                                             match: match)
-            for result in results {
-                print("\(result.byteCount)\t\(result.localURL.path)")
+            let result = try await client.downloadArtifacts(projectSlug: locator.project,
+                                                            jobNumber: locator.jobNumber,
+                                                            to: directory,
+                                                            match: match)
+            for item in result.downloaded {
+                print("\(item.byteCount)\t\(item.localURL.path)")
             }
-            if results.isEmpty {
+            for item in result.skipped {
+                FileHandle.standardError.write(Data("skipped \(item.path): \(item.reason)\n".utf8))
+            }
+            if result.downloaded.isEmpty && result.skipped.isEmpty {
                 if let match = match {
                     print("No artifacts matching \"\(match)\" found for job \(locator.jobNumber).")
                 } else {
                     print("No artifacts found for job \(locator.jobNumber).")
                 }
+            } else if !result.skipped.isEmpty {
+                let summary = Self.skipSummary(downloaded: result.downloaded.count,
+                                               skipped: result.skipped.count,
+                                               match: match)
+                FileHandle.standardError.write(Data((summary + "\n").utf8))
+                throw ExitCode(1) // some selected artifacts were not saved
             }
         } else {
             let artifacts = try await client.artifacts(projectSlug: locator.project, jobNumber: locator.jobNumber)
             try Cirqueduci.emit(artifacts, format: format)
         }
+    }
+
+    /// The stderr line after a download that skipped artifacts, e.g.
+    /// `3 artifact(s) matched "coverage": 1 downloaded, 2 skipped.`
+    static func skipSummary(downloaded: Int, skipped: Int, match: String?) -> String {
+        let selected = match.map { "matched \"\($0)\"" } ?? "found"
+        return "\(downloaded + skipped) artifact(s) \(selected): \(downloaded) downloaded, \(skipped) skipped."
     }
 }
