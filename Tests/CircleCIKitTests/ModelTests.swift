@@ -172,6 +172,17 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(page.items.count, 2)
         XCTAssertEqual(page.items.first?.path, "test-results/results.xml")
         XCTAssertEqual(page.items.first?.nodeIndex, 0)
+        XCTAssertEqual(page.items.first?.url, "https://output.circle-artifacts.com/abc/test-results/results.xml")
+    }
+
+    func testArtifactOutputOmitsURL() throws {
+        let page = try decode(Paged<Artifact>.self, Fixtures.artifactsPage)
+        let artifact = try XCTUnwrap(page.items.first)
+        let json = String(decoding: try JSONEncoder().encode(artifact), as: UTF8.self)
+        XCTAssertFalse(json.contains("url"), "artifact JSON must not expose its URL: \(json)")
+        XCTAssertFalse(json.contains("circle-artifacts.com"), "artifact JSON must not expose its URL: \(json)")
+        XCTAssertFalse(Artifact.tableColumns.contains("URL"))
+        XCTAssertFalse(artifact.tableValues.contains { $0.contains("circle-artifacts.com") })
     }
 
     func testTestsPageDecode() throws {
