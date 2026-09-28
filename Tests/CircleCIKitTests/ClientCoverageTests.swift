@@ -321,6 +321,41 @@ final class ClientCoverageTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: resultsFile, encoding: .utf8), "BINARY-CONTENT")
     }
 
+    func testDownloadArtifactsMatchSelectsOneByFullPath() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let stub = StubTransport()
+            .on("/artifacts", json: Fixtures.artifactsPage)
+            .on("output.circle-artifacts.com", json: "BINARY-CONTENT")
+        let client = makeClient(stub)
+
+        let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
+                                                            to: tempDir, match: "build/app.zip")
+        XCTAssertEqual(downloaded.map { $0.path }, ["build/app.zip"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("build/app.zip").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("test-results/results.xml").path))
+    }
+
+    func testDownloadArtifactsMatchSubstringSelectsMany() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let stub = StubTransport()
+            .on("/artifacts", json: Fixtures.artifactsPage)
+            .on("output.circle-artifacts.com", json: "BINARY-CONTENT")
+        let client = makeClient(stub)
+
+        // "/" appears in both fixture paths.
+        let many = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
+                                                      to: tempDir, match: "/")
+        XCTAssertEqual(many.count, 2)
+
+        let none = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
+                                                      to: tempDir, match: "nope")
+        XCTAssertTrue(none.isEmpty)
+    }
+
     func testDownloadArtifactsSanitizesTraversalPaths() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tempDir) }

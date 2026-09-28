@@ -73,6 +73,16 @@ final class CommandParsingTests: XCTestCase {
     func testArtifactsDownload() throws {
         let command = try ArtifactsCommand.parse(["40796", "-p", "gh/museapphq/Muse", "--download", "/tmp/out"])
         XCTAssertEqual(command.download, "/tmp/out")
+        XCTAssertNil(command.match)
+    }
+
+    func testArtifactsDownloadMatch() throws {
+        let command = try ArtifactsCommand.parse(["40796", "-p", "gh/museapphq/Muse", "--download", "/tmp/out", "--match", "app.zip"])
+        XCTAssertEqual(command.match, "app.zip")
+    }
+
+    func testArtifactsMatchRequiresDownload() {
+        XCTAssertThrowsError(try ArtifactsCommand.parse(["40796", "-p", "gh/museapphq/Muse", "--match", "app.zip"]))
     }
 
     // MARK: - approve

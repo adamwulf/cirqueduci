@@ -56,6 +56,23 @@ final class OutputFormatterTests: XCTestCase {
         XCTAssertEqual(array?.count, 3)
     }
 
+    func testArtifactListingsNeverContainURL() throws {
+        // Artifact URLs need a login session, so no listing format may print them.
+        let artifacts = try CircleCIJSON.decoder.decode(Paged<Artifact>.self,
+                                                        from: Data(Fixtures.artifactsPage.utf8)).items
+        XCTAssertEqual(artifacts.count, 2)
+        for format in [OutputFormat.table, .json, .jsonl, .id] {
+            let output = try OutputFormatter.render(artifacts, format: format)
+            XCTAssertFalse(output.contains("circle-artifacts.com"), "\(format) output exposed an artifact URL: \(output)")
+            XCTAssertFalse(output.contains("https://"), "\(format) output exposed a URL: \(output)")
+            XCTAssertFalse(output.lowercased().contains("\"url\""), "\(format) output has a url key: \(output)")
+            // JSON escapes "/" as "\/", so check the file name, not the full path.
+            XCTAssertTrue(output.contains("app.zip"), "\(format) output should still list the path: \(output)")
+        }
+        let table = try OutputFormatter.render(artifacts, format: .table)
+        XCTAssertFalse(table.uppercased().contains("URL"), "table has a URL column: \(table)")
+    }
+
     func testEmptyListRendersEmptyForIDAndJSONL() throws {
         let empty: [Job] = []
         XCTAssertEqual(try OutputFormatter.render(empty, format: .id), "")
