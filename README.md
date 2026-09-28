@@ -80,6 +80,8 @@ cirqueduci artifacts 40796 --project gh/museapphq/Muse --download ./artifacts
 # --match keeps artifacts whose path contains the text (case-sensitive):
 # a full path gets one artifact, a shorter string gets many.
 cirqueduci artifacts 40796 --project gh/museapphq/Muse --download ./artifacts --match build/app.zip
+# An artifact that is found but cannot be saved is reported on stderr as
+# "skipped <path>: <reason>", followed by a count line, and the command exits 1.
 cirqueduci tests 40796 --project gh/museapphq/Muse
 
 # Trigger (start) a pipeline

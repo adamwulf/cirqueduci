@@ -314,7 +314,7 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse",
-                                                            jobNumber: 40796, to: tempDir)
+                                                            jobNumber: 40796, to: tempDir).downloaded
         XCTAssertEqual(downloaded.count, 2)
         let resultsFile = tempDir.appendingPathComponent("test-results/results.xml")
         XCTAssertTrue(FileManager.default.fileExists(atPath: resultsFile.path))
@@ -331,7 +331,7 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
-                                                            to: tempDir, match: "build/app.zip")
+                                                            to: tempDir, match: "build/app.zip").downloaded
         XCTAssertEqual(downloaded.map { $0.path }, ["build/app.zip"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("build/app.zip").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("test-results/results.xml").path))
@@ -349,11 +349,12 @@ final class ClientCoverageTests: XCTestCase {
         // "/" appears in both fixture paths.
         let many = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
                                                       to: tempDir, match: "/")
-        XCTAssertEqual(many.count, 2)
+        XCTAssertEqual(many.downloaded.count, 2)
 
         let none = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 40796,
                                                       to: tempDir, match: "nope")
-        XCTAssertTrue(none.isEmpty)
+        XCTAssertTrue(none.downloaded.isEmpty)
+        XCTAssertTrue(none.skipped.isEmpty)
     }
 
     func testDownloadArtifactsSanitizesTraversalPaths() async throws {
@@ -373,13 +374,35 @@ final class ClientCoverageTests: XCTestCase {
         let client = makeClient(stub)
 
         let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse",
-                                                            jobNumber: 1, to: tempDir)
+                                                            jobNumber: 1, to: tempDir).downloaded
         XCTAssertEqual(downloaded.count, 1)
         // The written file must stay INSIDE the target directory.
         let destination = downloaded[0].localURL.standardizedFileURL.path
         XCTAssertTrue(destination.hasPrefix(tempDir.standardizedFileURL.path),
                       "artifact escaped the target directory: \(destination)")
         XCTAssertFalse(FileManager.default.fileExists(atPath: "/etc/evil.txt"))
+    }
+
+    func testDownloadArtifactsIntoExistingPrivateDirectory() async throws {
+        // Foundation's standardizedFileURL drops a leading "/private" only when
+        // the shorter path exists on disk. Here the directory exists (as after an
+        // earlier download) but the new files do not, so the two paths used to
+        // standardize differently and every new artifact was skipped.
+        let tempDir = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("artifacts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let stub = StubTransport()
+            .on("/artifacts", json: Fixtures.artifactsPage)
+            .on("output.circle-artifacts.com", json: "BINARY-CONTENT")
+        let client = makeClient(stub)
+
+        let result = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse",
+                                                        jobNumber: 40796, to: tempDir)
+        XCTAssertEqual(result.downloaded.count, 2)
+        XCTAssertTrue(result.skipped.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("test-results/results.xml").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("build/app.zip").path))
     }
 
     // MARK: - Remaining endpoints through the client
@@ -502,10 +525,40 @@ final class ClientCoverageTests: XCTestCase {
             .on("/artifacts", json: evil)
             .on("output.circle-artifacts.com", json: "PWNED")
         let client = makeClient(stub)
-        let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 1, to: tempDir)
+        let downloaded = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 1, to: tempDir).downloaded
+        XCTAssertEqual(downloaded.count, 1)
         for item in downloaded {
             XCTAssertTrue(item.localURL.standardizedFileURL.path.hasPrefix(tempDir.standardizedFileURL.path),
                           "artifact escaped: \(item.localURL.path)")
         }
+    }
+
+    func testDownloadArtifactsReportsSkippedArtifactsWithReason() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // One artifact per skip reason, plus one that downloads. "..\u0000"
+        // passes the component filter, but Foundation drops the NUL, so the
+        // destination becomes "<root>/.." and only the guard stops it.
+        let mixed = """
+        { "items": [
+          { "path": "build/app.zip", "node_index": 0,
+            "url": "https://output.circle-artifacts.com/abc/app.zip" },
+          { "path": "build/no-url.txt", "node_index": 0, "url": "" },
+          { "path": "../..", "node_index": 0,
+            "url": "https://output.circle-artifacts.com/abc/empty" },
+          { "path": "..\\u0000", "node_index": 0,
+            "url": "https://output.circle-artifacts.com/abc/outside" }
+        ], "next_page_token": null }
+        """
+        let stub = StubTransport()
+            .on("/artifacts", json: mixed)
+            .on("output.circle-artifacts.com", json: "BINARY-CONTENT")
+        let client = makeClient(stub)
+
+        let result = try await client.downloadArtifacts(projectSlug: "gh/museapphq/Muse", jobNumber: 1, to: tempDir)
+        XCTAssertEqual(result.downloaded.map { $0.path }, ["build/app.zip"])
+        XCTAssertEqual(result.skipped.map { $0.path }, ["build/no-url.txt", "../..", "..\u{0000}"])
+        XCTAssertEqual(result.skipped.map { $0.reason }, [.invalidURL, .emptyPath, .outsideDirectory])
     }
 }
